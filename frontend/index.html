@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }}</title>
+  <script src="assets/frameworks/bootstrap.bundle.min.js"></script>
+  <link href="assets/frameworks/bootstrap.min.css" rel="stylesheet">
+  <link href="assets/style.css" rel="stylesheet">
+</head>
+
+<body>
+  <div class="container mt-5">
+    <h1 class="mb-4">{{ title }}</h1>
+
+    {% if error %}
+    <div class="alert alert-danger" role="alert">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    {% if success %}
+    <div class="alert alert-success" role="alert">
+      <strong>Файл успешно загружен!</strong><br>
+      Прямая ссылка на файл:
+      <span id="file-link">{{ success }}</span>
+      <button class="btn btn-secondary btn-sm ml-2" onclick="copyToClipboard()">Копировать путь</button>
+    </div>
+    <div id="custom-popup" class="alert alert-info" role="alert" style="display: none;">
+      Путь скопирован в буфер обмена!
+    </div>
+    {% endif %}
+
+    <form action="/" method="POST" enctype="multipart/form-data">
+      <div class="mb-3">
+        <label for="user_folder" class="form-label">Выберите судью:</label>
+        <select name="user_folder" id="user_folder" class="form-select" required>
+          {% for folder in directories %}
+          <option value="{{ folder }}">{{ folder }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label for="case_number" class="form-label">Номер дела:</label>
+        <input type="text" name="case_number" id="case_number" class="form-control" required
+          pattern="^[a-zA-Z0-9а-яА-Я]{1,2}-\d{1,5}(-\d+)*-\d{4}$" placeholder="Пример: 1-10-2025 или 4-17-3-2025">
+      </div>
+
+      <div class="mb-3">
+        <label for="audio_date" class="form-label">Дата проведения:</label>
+        <input type="date" name="audio_date" id="audio_date" class="form-control" required>
+      </div>
+
+      <div class="mb-3">
+        <label for="audio_time" class="form-label">Время проведения:</label>
+        <input type="time" name="audio_time" id="audio_time" class="form-control" required>
+      </div>
+
+      <div class="form-check mb-3">
+        <input type="checkbox" name="closed_session" id="closed_session" class="form-check-input">
+        <label for="closed_session" class="form-check-label">Закрытое судебное заседание</label>
+      </div>
+
+      <div class="mb-3">
+        <label for="audio_file" class="form-label">Загрузить аудиофайл (MP3):</label>
+        <input type="file" name="audio_file" id="audio_file" class="form-control" accept=".mp3" required>
+      </div>
+
+      <button type="submit" class="btn btn-primary">
+        <span class="upload-text">Загрузить</span>
+        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="display: none;"></span>
+      </button>
+      <div class="upload-spinner">
+        <div class="spinner-border text-primary" style="width: 5rem; height: 5rem;"></div>
+      </div>
+    </form>
+  </div>
+
+  <div id="drop-overlay">
+    <div id="drop-text">Отпустите файл здесь, чтобы прикрепить его к загрузке</div>
+  </div>
+
+  <script>
+    // Drag and Drop функционал
+    const dropOverlay = document.getElementById('drop-overlay');
+    const audioInput = document.getElementById('audio_file');
+
+    document.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropOverlay.style.display = 'flex';
+    });
+
+    document.addEventListener('dragleave', (e) => {
+      if (e.relatedTarget === null) {
+        dropOverlay.style.display = 'none';
+      }
+    });
+
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropOverlay.style.display = 'none';
+
+      const files = e.dataTransfer.files;
+      if (files.length > 0 && files[0].type === 'audio/mpeg') {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(files[0]);
+        audioInput.files = dataTransfer.files;
+        audioInput.dispatchEvent(new Event('change'));
+      }
+    });
+
+    // Блокировка кнопки и спиннер
+    document.querySelector('form').addEventListener('submit', function () {
+      this.classList.add('uploading');
+      this.querySelector('button[type="submit"]').disabled = true;
+    });
+    function copyToClipboard() {
+      const filePath = document.getElementById("file-link").innerText;
+      const tempTextArea = document.createElement("textarea");
+      tempTextArea.value = filePath;
+      document.body.appendChild(tempTextArea);
+      tempTextArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempTextArea);
+      // Показываем кастомное уведомление
+      const popup = document.getElementById("custom-popup");
+      popup.style.display = 'block';
+
+      // Скрываем его через 3 секунды
+      setTimeout(() => {
+        popup.style.display = 'none';
+      }, 3000);
+    }
+    document.getElementById('audio_file').addEventListener('change', function (e) {
+      const file = e.target.files[0];
+      if (file && file.type !== 'audio/mpeg') {
+        alert('Пожалуйста, выберите файл в формате MP3');
+        this.value = '';
+      }
+    });
+  </script>
+</body>
+
+</html>
