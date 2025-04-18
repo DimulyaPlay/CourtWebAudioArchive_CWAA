@@ -5,6 +5,19 @@ import hashlib
 import socket
 from traceback import print_exc
 import subprocess
+from sqlalchemy import text
+from backend.db import engine, Session
+from backend.models import AudioRecord
+import re
+from datetime import datetime
+
+COURTROOMS_FILE = 'courtrooms.txt'
+
+def get_available_courtrooms():
+    if not os.path.exists(COURTROOMS_FILE):
+        return []
+    with open(COURTROOMS_FILE, 'r', encoding='utf-8') as f:
+        return [line.strip() for line in f if line.strip()]
 
 def get_server_ip():
     hostname = socket.gethostname()
@@ -29,7 +42,9 @@ def read_create_config():
         'server_ip': get_server_ip(),
         'server_port': 446,
         "public_audio_path": "",
-        "closed_audio_path": ""
+        "closed_audio_path": "",
+        "recognize_text_from_audio_path": '',
+        'create_year_subfolders': 'false'
     }
     config = default_configuration.copy()
     if os.path.exists('config.txt'):
@@ -85,3 +100,90 @@ def is_file_fully_copied(file_path, check_interval=2, retries=5):
     return False
 
 
+def index_record_text(audio_id: int, content: str):
+    with engine.begin() as conn:
+        print(f"[FTS] Индексация: ID={audio_id}, размер текста={len(content)}")
+        conn.exec_driver_sql(
+            "INSERT INTO record_texts (audio_id, content) VALUES (?, ?)",
+            parameters=[(audio_id, content)]
+        )
+
+
+def parse_transcript_file(path):
+    """
+    Универсальный парсер для .srt и faster-whisper-like файлов.
+    Возвращает список словарей: {'start': float, 'end': float, 'text': str}
+    """
+    entries = []
+    with open(path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    buffer = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        buffer.append(line)
+
+    i = 0
+    while i < len(buffer):
+        line = buffer[i]
+
+        # .srt формат: "00:00:01,000 --> 00:00:03,000"
+        srt_match = re.match(r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2}),(\d{3})', line)
+        if srt_match and i + 1 < len(buffer):
+            start = int(srt_match[1]) * 3600 + int(srt_match[2]) * 60 + int(srt_match[3]) + int(srt_match[4]) / 1000
+            end = int(srt_match[5]) * 3600 + int(srt_match[6]) * 60 + int(srt_match[7]) + int(srt_match[8]) / 1000
+            text = buffer[i + 1]
+            entries.append({'start': start, 'end': end, 'text': text})
+            i += 3
+            continue
+
+        # Faster-whisper формат: "[00:00.000 --> 00:05.060] Текст..."
+        fw_match = re.match(r'\[(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2})\.(\d{3})\]\s+(.*)', line)
+        if fw_match:
+            start = int(fw_match[1]) * 60 + int(fw_match[2]) + int(fw_match[3]) / 1000
+            end = int(fw_match[4]) * 60 + int(fw_match[5]) + int(fw_match[6]) / 1000
+            text = fw_match[7].strip()
+            entries.append({'start': start, 'end': end, 'text': text})
+        i += 1
+
+    return entries
+
+def scan_and_populate_database(base_path: str, user_folder: str):
+    session = Session()
+    new_records = 0
+    for root, dirs, files in os.walk(base_path):
+        for file in files:
+            if not file.endswith(".mp3"):
+                continue
+            try:
+                # Ожидаем формат файла: 2025-02-20_18-55.mp3
+                date_part = file.rsplit('.', 1)[0]
+                dt = datetime.strptime(date_part, "%Y-%m-%d_%H-%M")
+            except ValueError:
+                continue
+
+            file_path = os.path.join(root, file)
+            case_number = os.path.basename(os.path.dirname(file_path))
+
+            # Проверка, есть ли уже такая запись
+            exists = session.query(AudioRecord).filter_by(file_path=file_path).first()
+            if exists:
+                continue
+
+            record = AudioRecord(
+                user_folder=user_folder,
+                case_number=case_number,
+                audio_date=dt,
+                recognize_text=True,
+                file_path=file_path,
+                comment='(добавлено через сканирование)',
+                courtroom=None
+            )
+            session.add(record)
+            new_records += 1
+
+    session.commit()
+    session.close()
+    return new_records

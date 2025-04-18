@@ -1,29 +1,31 @@
-from PySide2.QtCore import Signal, Slot
+from PySide2.QtCore import Signal
 from PySide2.QtGui import QIcon
 import time
 from backend import create_app, config
-from backend.utils import save_config, get_all_public_ips, compare_files
+from backend.utils import save_config, get_all_public_ips
+from backend.recognition_orchestrator import run_orchestrator_loop
 from waitress import serve
 import subprocess
 from string import Template
 import os
 import threading
-import logging
 import psutil
 from PySide2.QtWidgets import (
-QMainWindow, QApplication, QPushButton, QLabel, QVBoxLayout, QWidget, QLineEdit, QFormLayout, QMessageBox, QComboBox, QSystemTrayIcon, QMenu, QAction)
+    QMainWindow, QApplication, QPushButton, QLabel, QVBoxLayout, QWidget, QLineEdit, QFormLayout, QMessageBox,
+    QComboBox, QSystemTrayIcon, QMenu, QAction, QCheckBox, QListWidget, QHBoxLayout, QTableWidget, QTableWidgetItem, QFileDialog)
 import sys
+from backend.backup_service import BackupSettingsWindow
+
 
 # .venv/Scripts/pyinstaller.exe --windowed --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx-1.27.1;nginx-1.27.1" "CWAA Server.py"
 
-# Initialize logging and directories
-logging.basicConfig(filename='app.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-if not os.path.exists('logs'):
-    os.mkdir('logs')
-if not os.path.exists('temp'):
-    os.mkdir('temp')
-if not os.path.exists('backend'):
-    os.mkdir('backend')
+# if getattr(sys, 'frozen', False):
+#     sys.stdout = open('console_output.log', 'a', buffering=1)
+#     sys.stderr = open('console_errors.log', 'a', buffering=1)
+
+os.makedirs('logs', exist_ok=True)
+os.makedirs('temp', exist_ok=True)
+os.makedirs('backend', exist_ok=True)
 
 # Nginx configuration template
 nginx_config_template = """
@@ -74,9 +76,7 @@ def start_nginx():
             ['nginx-1.27.1/nginx.exe', '-c', os.path.abspath('nginx_dynamic.conf')],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-        time.sleep(2)  # Даем немного времени процессу запуститься
-
-        # Проверяем, запущен ли процесс Nginx
+        time.sleep(2)
         if nginx_process.poll() is not None:
             stdout, stderr = nginx_process.communicate()
             return 1, f"start_nginx: {stderr.decode()}"
@@ -128,13 +128,10 @@ def start_service():
     if res:
         window.signal_error(msg)
         return
-    # Запускаем Flask в отдельном потоке
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.exit_reason = 0
     flask_thread.start()
-    # Дожидаемся инициализации `flask_app`
     time.sleep(2)
-    # Проверяем, что Flask-приложение успешно создано
     if flask_app is None:
         print("Ошибка: Flask App не создан!")
         return
@@ -148,17 +145,16 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.backup_window = None
         self.monitor_thread = None
         self.stop_threads_event = threading.Event()
         self.setWindowTitle("Сервер CWAA")
-        self.setFixedSize(420, 280)
+        self.setFixedSize(420, 370)
         self.setWindowIcon(QIcon('cwaa-icon.ico'))
 
         # Статус сервера и кнопки
         self.status_label = QLabel("Статус: Остановлен", self)
-        self.start_button = QPushButton("Запустить сервер", self)
-        self.stop_button = QPushButton("Остановить сервер", self)
-        self.stop_button.setEnabled(False)
+        self.start_button = QPushButton("🚀 Запустить сервер", self)
         self.app_link = QLabel()
         self.update_app_link()
         self.app_link.setOpenExternalLinks(True)
@@ -176,50 +172,57 @@ class MainWindow(QMainWindow):
         self.public_audio_path_input.setPlaceholderText('C:\\папка\\еще папка')
         self.closed_audio_path_input = QLineEdit(config['closed_audio_path'])
         self.closed_audio_path_input.setPlaceholderText('C:\\папка\\еще папка')
+        self.recognize_text_from_audio_path_input = QLineEdit(config['recognize_text_from_audio_path'])
+        self.recognize_text_from_audio_path_input.setPlaceholderText('C:\\папка\\еще папка')
+        self.create_year_subfolders = QCheckBox()
+        self.create_year_subfolders.setChecked(config['create_year_subfolders']=='true')
         form_layout.addRow("Выберите IP для размещения сервера:", self.server_ip_combo)
         form_layout.addRow("Введите номер порта для размещения сервера:", self.server_port_input)
+        form_layout.addRow('Создавать подпапки по годам в папках судей', self.create_year_subfolders)
         form_layout.addRow("Путь хранения открытых аудиопротоколов:", self.public_audio_path_input)
         form_layout.addRow("Путь хранения закрытых аудиопротоколов:", self.closed_audio_path_input)
-
+        form_layout.addRow('Путь для распознавания аудиопротоколов:', self.recognize_text_from_audio_path_input)
         # Кнопка сохранения настроек
-        self.save_button = QPushButton("Сохранить настройки")
+        self.save_button = QPushButton("💾 Сохранить настройки")
         self.save_button.clicked.connect(self.save_config)
 
-        self.firewall_button = QPushButton("Создать правило в брандмауэре для указанного порта\nТребуется запуск от имени администратора")
+        self.firewall_button = QPushButton(
+            "🛡 Создать правило в брандмауэре для указанного порта\nТребуется запуск от имени администратора")
         self.firewall_button.clicked.connect(self.create_firewall_rule)
+        self.scan_button = QPushButton("📂 Сканировать папки и импортировать записи")
+        self.scan_button.clicked.connect(self.scan_archives)
+
+        self.backup_button = QPushButton("🛠 Параметры резервного копирования")
+        self.backup_button.clicked.connect(self.open_backup_settings)
+
+        self.courtroom_button = QPushButton("🏛 Управление залами")
+        self.courtroom_button.clicked.connect(self.open_courtroom_manager)
 
         # Основной layout
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.app_link)
         layout.addWidget(self.start_button)
-        layout.addWidget(self.stop_button)
         layout.addLayout(form_layout)
         layout.addWidget(self.firewall_button)
+        layout.addWidget(self.scan_button)
+        layout.addWidget(self.backup_button)
+        layout.addWidget(self.courtroom_button)
         layout.addWidget(self.save_button)
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        # Подключение событий кнопок
         self.start_button.clicked.connect(self.start_server)
-        self.stop_button.clicked.connect(self.stop_server)
 
-        # Настройка системного трея
         self.tray_icon = QSystemTrayIcon(self)
         self.update_tray_icon("yellow")  # Изначально остановлен
         self.tray_icon.setVisible(True)
 
-        # Контекстное меню для иконки в трее
         tray_menu = QMenu()
         self.start_action = QAction("Запустить сервер", self)
         self.start_action.triggered.connect(self.start_server)
         tray_menu.addAction(self.start_action)
-
-        self.stop_action = QAction("Остановить сервер", self)
-        self.stop_action.setEnabled(False)
-        self.stop_action.triggered.connect(self.stop_server)
-        tray_menu.addAction(self.stop_action)
 
         exit_action = QAction("Выход", self)
         exit_action.triggered.connect(self.exit_application)
@@ -233,10 +236,23 @@ class MainWindow(QMainWindow):
         else:
             self.show()
 
+    def open_backup_settings(self):
+        if not self.backup_window:
+            self.backup_window = BackupSettingsWindow()
+        self.backup_window.show()
+
+    def open_courtroom_manager(self):
+        if not hasattr(self, 'courtroom_window') or self.courtroom_window is None:
+            self.courtroom_window = CourtroomManagerWindow()
+        self.courtroom_window.show()
 
     def start_server(self):
         try:
+            if not self.backup_window:
+                self.backup_window = BackupSettingsWindow()
             start_service()  # Запуск сервиса, включая Flask
+            threading.Thread(target=run_orchestrator_loop, daemon=True).start()
+
             self.monitor_thread = threading.Thread(target=self.monitor_services, args=(self.nginx_error_signal, self.stop_threads_event),
                                                    daemon=True)
             self.monitor_thread.start()
@@ -252,14 +268,12 @@ class MainWindow(QMainWindow):
             self.update_status("Запущен")
             self.update_tray_icon("green")
             self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
             self.server_ip_combo.setEnabled(False)
             self.server_port_input.setEnabled(False)
             self.public_audio_path_input.setEnabled(False)
             self.closed_audio_path_input.setEnabled(False)
             self.save_button.setEnabled(False)
             self.start_action.setEnabled(False)
-            self.stop_action.setEnabled(True)
         except RuntimeError as e:
             self.update_tray_icon("red")
             self.show_error_message(str(e))
@@ -267,21 +281,9 @@ class MainWindow(QMainWindow):
     def stop_server(self):
         global flask_thread
         stop_service()
-        # Устанавливаем флаг остановки и ждем завершения потока
         self.stop_threads_event.set()
         if self.monitor_thread and self.monitor_thread.is_alive():
             self.monitor_thread.join()
-        self.update_status("Остановлен")
-        self.update_tray_icon("yellow")
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.server_ip_combo.setEnabled(True)
-        self.server_port_input.setEnabled(True)
-        self.public_audio_path_input.setEnabled(True)
-        self.closed_audio_path_input.setEnabled(True)
-        self.start_action.setEnabled(True)
-        self.stop_action.setEnabled(False)
-        self.save_button.setEnabled(True)
 
     def monitor_services(self, signal_error, stop_event):
         """Функция для отслеживания процессов nginx и flask"""
@@ -325,6 +327,8 @@ class MainWindow(QMainWindow):
         config['server_port'] = int(self.server_port_input.text())
         config['public_audio_path'] = self.public_audio_path_input.text().replace('"', '')
         config['closed_audio_path'] = self.closed_audio_path_input.text().replace('"', '')
+        config['recognize_text_from_audio_path'] = self.recognize_text_from_audio_path_input.text().replace('"', '')
+        config['create_year_subfolders'] = "true" if self.create_year_subfolders.isChecked() else 'false'
         save_config(config)
         self.update_app_link()
 
@@ -335,6 +339,15 @@ class MainWindow(QMainWindow):
         error_dialog.setDetailedText(message)
         error_dialog.setIcon(QMessageBox.Critical)
         error_dialog.exec_()
+
+    def scan_archives(self):
+        from backend.utils import scan_and_populate_database
+        count = 0
+        for folder in os.listdir(config['public_audio_path']):
+            user_path = os.path.join(config['public_audio_path'], folder)
+            if os.path.isdir(user_path):
+                count += scan_and_populate_database(user_path, folder)
+        QMessageBox.information(self, "Сканирование завершено", f"Добавлено новых записей: {count}")
 
     def update_tray_icon(self, status_color):
         icon = QIcon(f"assets/cwaa-icon-{status_color}.png")
@@ -363,8 +376,129 @@ class MainWindow(QMainWindow):
         self.hide()
 
     def exit_application(self):
-        stop_service()
+        self.stop_server()
         sys.exit(0)
+
+
+class CourtroomManagerWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Управление залами")
+        self.setFixedSize(400, 500)
+
+        layout = QVBoxLayout()
+        import_label = QLabel("🔁 Залы для сохранения аудиозаписей:")
+        layout.addWidget(import_label)
+        self.list_widget = QListWidget()
+        self.load_courtrooms()
+        self.load_import_sources()
+        layout.addWidget(self.list_widget)
+
+        cr_btns = QHBoxLayout()
+        self.input_field = QLineEdit()
+        self.add_button = QPushButton("➕ Добавить")
+        self.add_button.clicked.connect(self.add_courtroom)
+        self.delete_button = QPushButton("🗑 Удалить выбранное")
+        self.delete_button.clicked.connect(self.delete_selected)
+        cr_btns.addWidget(self.add_button)
+        cr_btns.addWidget(self.delete_button)
+        layout.addLayout(cr_btns)
+
+        import_label = QLabel("🔁 Залы для импорта аудиозаписей:")
+        layout.addWidget(import_label)
+
+        self.import_table = QTableWidget(0, 2)
+        self.import_table.setHorizontalHeaderLabels(["Зал", "Папка"])
+        self.import_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.import_table)
+
+        import_form = QHBoxLayout()
+        self.import_name = QLineEdit()
+        self.import_path = QLineEdit()
+        browse_btn = QPushButton("📁")
+        browse_btn.clicked.connect(self.browse_folder)
+        import_form.addWidget(self.import_name)
+        import_form.addWidget(self.import_path)
+        import_form.addWidget(browse_btn)
+        layout.addLayout(import_form)
+
+        import_btns = QHBoxLayout()
+        self.add_import_btn = QPushButton("➕ Добавить")
+        self.add_import_btn.clicked.connect(self.add_import_entry)
+        self.del_import_btn = QPushButton("🗑 Удалить выбранное")
+        self.del_import_btn.clicked.connect(self.delete_import_entry)
+        import_btns.addWidget(self.add_import_btn)
+        import_btns.addWidget(self.del_import_btn)
+        layout.addLayout(import_btns)
+
+        self.save_button = QPushButton("💾 Сохранить")
+        self.save_button.clicked.connect(self.save_courtrooms)
+        layout.addWidget(self.save_button)
+        self.setLayout(layout)
+
+    def load_courtrooms(self):
+        from backend.utils import get_available_courtrooms
+        self.list_widget.clear()
+        for room in get_available_courtrooms():
+            self.list_widget.addItem(room)
+
+    def add_courtroom(self):
+        name = self.input_field.text().strip()
+        if name and name not in [self.list_widget.item(i).text() for i in range(self.list_widget.count())]:
+            self.list_widget.addItem(name)
+            self.input_field.clear()
+
+    def delete_selected(self):
+        for item in self.list_widget.selectedItems():
+            self.list_widget.takeItem(self.list_widget.row(item))
+
+    def save_courtrooms(self):
+        COURTROOMS_PATH = "courtrooms.txt"
+        IMPORT_PATH = 'import_sources.txt'
+        courtrooms = [self.list_widget.item(i).text().strip() for i in range(self.list_widget.count()) if self.list_widget.item(i).text().strip()]
+        with open(COURTROOMS_PATH, "w", encoding="utf-8") as f:
+            for room in courtrooms:
+                f.write(room + "\n")
+        with open(IMPORT_PATH, 'w', encoding='utf-8') as f:
+            for row in range(self.import_table.rowCount()):
+                name = self.import_table.item(row, 0).text().strip()
+                path = self.import_table.item(row, 1).text().strip()
+                if name and path:
+                    f.write(f"{name}|{path}\n")
+        QMessageBox.information(self, "Успешно", "Список залов сохранён.")
+
+
+    def load_import_sources(self):
+        IMPORT_PATH = 'import_sources.txt'
+        if not os.path.exists(IMPORT_PATH):
+            return
+        with open(IMPORT_PATH, 'r', encoding='utf-8') as f:
+            for line in f:
+                if '|' in line:
+                    name, path = line.strip().split('|', 1)
+                    self.add_import_entry(name, path)
+
+    def add_import_entry(self, name=None, path=None):
+        name = name or self.import_name.text().strip()
+        path = path or self.import_path.text().strip()
+        if not name or not path:
+            return
+        row = self.import_table.rowCount()
+        self.import_table.insertRow(row)
+        self.import_table.setItem(row, 0, QTableWidgetItem(name))
+        self.import_table.setItem(row, 1, QTableWidgetItem(path))
+        self.import_name.clear()
+        self.import_path.clear()
+
+    def delete_import_entry(self):
+        selected = self.import_table.selectionModel().selectedRows()
+        for index in sorted(selected, reverse=True):
+            self.import_table.removeRow(index.row())
+
+    def browse_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Выбор папки")
+        if folder:
+            self.import_path.setText(folder)
 
 
 if __name__ == '__main__':

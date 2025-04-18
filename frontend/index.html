@@ -10,7 +10,10 @@
 </head>
 
 <body>
-  <div class="container mt-5">
+      <div class="container mt-5">
+        <div style="position: absolute; top: 20px; right: 20px; z-index: 1000;">
+      <a href="/archive" class="btn-custom">🔍 Обзор аудиопротоколов в архиве</a>
+    </div>
     <h1 class="mb-4">{{ title }}</h1>
 
     {% if error %}
@@ -44,7 +47,7 @@
       <div class="mb-3">
         <label for="case_number" class="form-label">Номер дела:</label>
         <input type="text" name="case_number" id="case_number" class="form-control" required
-          pattern="^[a-zA-Z0-9а-яА-Я]{1,2}-\d{1,5}(-\d+)*-\d{4}$" placeholder="Пример: 1-10-2025 или 4-17-3-2025">
+          pattern="^[a-zA-Zа-яА-Я0-9]+-\d{1,5}(-\d+)*-\d{4}$" placeholder="Пример: 1-10-2025 или 4-17-3-2025">
       </div>
 
       <div class="mb-3">
@@ -55,6 +58,27 @@
       <div class="mb-3">
         <label for="audio_time" class="form-label">Время проведения:</label>
         <input type="time" name="audio_time" id="audio_time" class="form-control" required>
+      </div>
+
+      <div class="mb-3">
+        <label for="courtroom" class="form-label">Зал проведения заседания:</label>
+        <select name="courtroom" id="courtroom" class="form-select" required>
+          <option value=""></option>
+          {% for room in courtrooms %}
+          <option value="{{ room }}">{{ room }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="mb-3">
+        <label for="comment" class="form-label">Комментарий к аудиопротоколу:</label>
+        <textarea name="comment" id="comment" class="form-control" rows="2"
+          placeholder="Запишите здесь что-нибудь для того чтобы быстро найти этот аудиопротокол в будущем."></textarea>
+      </div>
+
+      <div class="form-check mb-3">
+        <input type="checkbox" name="recognize_text" id="recognize_text" class="form-check-input">
+        <label for="recognize_text" class="form-check-label">Перевести аудио в текст (Не работает для закрытых с.з.).</label>
       </div>
 
       <div class="form-check mb-3">
@@ -141,5 +165,4 @@
     });
   </script>
 </body>
-
 </html>
