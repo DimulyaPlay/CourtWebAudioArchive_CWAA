@@ -4,7 +4,7 @@ from backend.utils import get_file_hash, compare_files, parse_transcript_file
 from . import config
 from backend.db import Session, engine
 from backend.models import AudioRecord
-from sqlalchemy import text
+from sqlalchemy import text, desc
 import zipfile
 import io
 from pathlib import Path
@@ -51,7 +51,7 @@ def search_records():
                 pass
     if user_folder:
         query = query.filter(AudioRecord.user_folder.like(f"%{user_folder}%"))
-    records = query.limit(20).all()
+    records = query.order_by(desc(AudioRecord.audio_date)).limit(50).all()
     results = []
     fts_matches = set()
     if use_fts and text_query:

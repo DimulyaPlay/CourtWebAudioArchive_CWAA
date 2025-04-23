@@ -150,15 +150,17 @@ def parse_transcript_file(path):
 
     return entries
 
+
 def scan_and_populate_database(base_path: str, user_folder: str):
     session = Session()
     new_records = 0
+    indexed_records = []  # временный список для отложенной индексации
+
     for root, dirs, files in os.walk(base_path):
         for file in files:
             if not file.endswith(".mp3"):
                 continue
             try:
-                # Ожидаем формат файла: 2025-02-20_18-55.mp3
                 date_part = file.rsplit('.', 1)[0]
                 dt = datetime.strptime(date_part, "%Y-%m-%d_%H-%M")
             except ValueError:
@@ -167,7 +169,6 @@ def scan_and_populate_database(base_path: str, user_folder: str):
             file_path = os.path.join(root, file)
             case_number = os.path.basename(os.path.dirname(file_path))
 
-            # Проверка, есть ли уже такая запись
             exists = session.query(AudioRecord).filter_by(file_path=file_path).first()
             if exists:
                 continue
@@ -182,8 +183,25 @@ def scan_and_populate_database(base_path: str, user_folder: str):
                 courtroom=None
             )
             session.add(record)
+            session.flush()  # получаем ID до коммита
+
+            txt_path = os.path.splitext(file_path)[0] + '.txt'
+            if os.path.exists(txt_path):
+                record.recognized_text_path = txt_path
+                indexed_records.append((record.id, txt_path))
+
             new_records += 1
 
     session.commit()
     session.close()
+
+    # Вне ORM-сессии: индексируем текст, уже зная ID
+    for record_id, txt_path in indexed_records:
+        try:
+            with open(txt_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            index_record_text(record_id, content)
+        except Exception as e:
+            print(f"⚠ Ошибка при обработке текста {txt_path}: {e}")
+
     return new_records

@@ -38,28 +38,3 @@
 .uploading .upload-spinner {
   display: block;
 }
-
-.btn-custom {
-background: linear-gradient(135deg, #6a11cb, #2575fc);
-border: none;
-color: white;
-padding: 20px 20px;
-font-size: 1rem;
-border-radius: 50px;
-margin: 20px 20px;
-display: inline-block;
-transition: transform 0.3s ease, box-shadow 0.3s ease;
-box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-}
-
-.btn-custom:hover {
-transform: translateY(-5px);
-box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-color: white;
-}
-
-.btn-custom:active {
-transform: translateY(0);
-box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-color: white;
-}
