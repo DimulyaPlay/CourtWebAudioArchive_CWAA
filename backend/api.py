@@ -144,3 +144,23 @@ def get_record_data(record_id):
         'phrases': phrases
     })
 
+
+@api.route('/reset_transcription/<int:record_id>', methods=['POST'])
+def reset_transcription(record_id):
+    session = Session()
+    record = session.query(AudioRecord).get(record_id)
+    if not record:
+        session.close()
+        return jsonify({"error": "Протокол не найден"}), 404
+
+    if record.recognized_text_path and os.path.exists(record.recognized_text_path):
+        try:
+            os.remove(record.recognized_text_path)
+        except Exception as e:
+            print(f"Не удалось удалить файл: {e}")
+
+    record.recognized_text_path = None
+    record.recognize_text = True
+    session.commit()
+    session.close()
+    return jsonify({"status": "ok"})

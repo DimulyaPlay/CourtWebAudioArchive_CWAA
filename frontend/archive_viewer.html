@@ -1,241 +1,285 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
-    <meta charset="UTF-8">
-    <title>Просмотр архива</title>
-    <link href="/assets/frameworks/bootstrap.min.css" rel="stylesheet">
-    <script src="/assets/frameworks/jquery.min.js"></script>
-    <style>
-        html, body {
-            height: 100%;
-            overflow: hidden;
-        }
-        .phrase-item {
-            cursor: pointer;
-            padding: 0.3rem;
-            border-bottom: 1px dotted #ccc;
-        }
-        .phrase-active {
-            background-color: #e6f7ff;
-        }
-        .transcript-viewer {
-            height: calc(100vh - 100px);
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            padding: 10px;
-            border-radius: 6px;
-        }
-        .audio-player-bar {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: #f8f9fa;
-            border-top: 1px solid #ddd;
-            padding: 10px;
-        }
-        .row-content {
-            display: flex;
-            gap: 0.5rem;
-            height: calc(100vh - 100px); /* учитываем панель и отступы */
-        }
-        .left-panel {
-            width: 40%;
-            min-width: 300px;
-            max-width: 500px;
-            display: flex;
-            flex-direction: column;
-        }
+  <meta charset="UTF-8">
+  <title>Просмотр архива</title>
+  <script src="/assets/frameworks/jquery.min.js"></script>
+  <script src="/assets/frameworks/bootstrap.bundle.min.js"></script>
+  <link href="/assets/frameworks/bootstrap.min.css" rel="stylesheet">
+  <style>
+    html,
+    body {
+      height: 100%;
+      overflow: hidden;
+    }
 
-        .right-panel {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-        }
+    .phrase-item {
+      cursor: pointer;
+      padding: 0.3rem;
+      border-bottom: 1px dotted #ccc;
+    }
 
-        .record-list-scroll {
-            flex: 1;
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            padding: 5px;
-        }
+    .phrase-active {
+      background-color: #e6f7ff;
+    }
 
-        .record-active {
-            background-color: #e9f5ff;
-            border-left: 4px solid #007bff;
-        }
-        .match-active {
-    outline: 2px dashed orange;
-}
-    </style>
+    .transcript-viewer {
+      height: calc(100vh - 100px);
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      padding: 10px;
+      border-radius: 6px;
+    }
+
+    .audio-player-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #f8f9fa;
+      border-top: 1px solid #ddd;
+      padding: 10px;
+    }
+
+    .row-content {
+      display: flex;
+      gap: 0.5rem;
+      height: calc(100vh - 100px);
+      /* учитываем панель и отступы */
+    }
+
+    .left-panel {
+      width: 40%;
+      min-width: 300px;
+      max-width: 500px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .right-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .record-list-scroll {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      padding: 5px;
+    }
+
+    .record-active {
+      background-color: #e9f5ff;
+      border-left: 4px solid #007bff;
+    }
+
+    .match-active {
+      outline: 2px dashed orange;
+    }
+  </style>
 </head>
-<body class="container-fluid">
-<div class="row-content mt-3">
-  <!-- Левая панель -->
-  <div class="left-panel">
-    <h4>Поиск</h4>
-    <form id="searchForm" class="mb-2">
-                <select name="user_folder" class="form-select mb-2">
-                  <option value="">Выберите судью</option>
-                  {% for folder in directories %}
-                  <option value="{{ folder }}">{{ folder }}</option>
-                  {% endfor %}
-                </select>
-                <input type="text" class="form-control mb-2" name="case_number" placeholder="Номер дела">
-                <div class="d-flex gap-2 mb-2">
-                  <div class="flex-fill">
-                    <label class="form-label small">Дата от:</label>
-                    <input type="date" class="form-control" name="date_from">
-                  </div>
-                  <div class="flex-fill">
-                    <label class="form-label small">Дата до:</label>
-                    <input type="date" class="form-control" name="date_to">
-                  </div>
-                </div>
-                <select name="courtroom" class="form-select mb-2">
-                  <option value="">Выберите зал</option>
-                  {% for room in courtrooms %}
-                  <option value="{{ room }}">{{ room }}</option>
-                  {% endfor %}
-                </select>
-                <input type="text" class="form-control mb-2" name="comment" placeholder="Комментарий">
 
-                <input type="text" class="form-control mb-2" name="text_query" placeholder="Поиск по тексту">
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="use_fts" id="use_fts">
-                    <label class="form-check-label" for="use_fts">Искать по тексту</label>
-                </div>
-                <div class="d-flex gap-2 mt-2">
-                  <button type="submit" class="btn btn-primary">Искать</button>
-                  <button type="button" class="btn btn-outline-secondary" id="clearFilters">Очистить</button>
-                </div>
-    </form>
-    <div class="d-flex justify-content-between align-items-center">
-      <span>Найдено: <span id="foundCount">0</span></span>
-      <button id="downloadSelected" class="btn btn-sm btn-outline-secondary">Скачать выбранные</button>
+<body class="container-fluid">
+  <div class="row-content mt-3">
+    <!-- Левая панель -->
+    <div class="left-panel">
+      <h4>Поиск</h4>
+      <form id="searchForm" class="mb-2">
+        <select name="user_folder" class="form-select mb-2">
+          <option value="">Выберите судью</option>
+          {% for folder in directories %}
+          <option value="{{ folder }}">{{ folder }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" class="form-control mb-2" name="case_number" placeholder="Номер дела">
+        <div class="d-flex gap-2 mb-2">
+          <div class="flex-fill">
+            <label class="form-label small">Дата от:</label>
+            <input type="date" class="form-control" name="date_from">
+          </div>
+          <div class="flex-fill">
+            <label class="form-label small">Дата до:</label>
+            <input type="date" class="form-control" name="date_to">
+          </div>
+        </div>
+        <select name="courtroom" class="form-select mb-2">
+          <option value="">Выберите зал</option>
+          {% for room in courtrooms %}
+          <option value="{{ room }}">{{ room }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" class="form-control mb-2" name="comment" placeholder="Комментарий">
+
+        <input type="text" class="form-control mb-2" name="text_query" placeholder="Поиск по тексту">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="use_fts" id="use_fts">
+          <label class="form-check-label" for="use_fts">Искать по тексту</label>
+        </div>
+        <div class="d-flex gap-2 mt-2">
+          <button type="submit" class="btn btn-primary">Искать</button>
+          <button type="button" class="btn btn-outline-secondary" id="clearFilters">Очистить</button>
+        </div>
+      </form>
+      <div class="d-flex justify-content-between align-items-center">
+        <span id="foundLabel">Найдено: <span id="foundCount">0</span></span>
+        <div class="btn-group">
+          <button id="copyPaths" class="btn btn-sm btn-outline-secondary">Копировать путь</button>
+          <button id="downloadSelected" class="btn btn-sm btn-outline-secondary">Скачать выбранные</button>
+        </div>
+      </div>
+      <div id="recordList" class="record-list-scroll mt-2"></div>
     </div>
-    <div id="recordList" class="record-list-scroll mt-2"></div>
-  </div>
 
     <!-- Правая панель: текст -->
     <div class="right-panel">
-    <h4 id="selectedTitle"></h4>
-        <div class="mb-2 d-flex align-items-center gap-2">
-          <input type="text" id="localSearch" class="form-control form-control-sm" placeholder="Поиск в тексте..." style="max-width: 250px;">
-          <button id="prevMatch" class="btn btn-sm btn-outline-secondary">←</button>
-          <button id="nextMatch" class="btn btn-sm btn-outline-secondary">→</button>
-          <span id="matchCounter" class="text-muted small ms-2"></span>
-        </div>
-    <div class="transcript-viewer" id="transcriptBox">
-      <p class="text-muted text-center mt-5">Выберите аудиозапись для просмотра протокола</p>
-    </div>
-  </div>
-</div>
-
-<!-- Глобальный плеер -->
-<div class="audio-player-bar">
-  <audio id="audioPlayer" style="display: none">
-    <source id="audioSource" src="" type="audio/mpeg">
-  </audio>
-  <div class="d-flex align-items-center gap-3">
-    <button class="btn btn-sm btn-outline-primary" id="playPause">▶</button>
-    <div class="flex-grow-1">
-      <input type="range" id="seekBar" min="0" value="0" step="0.01" class="form-range">
-      <div class="d-flex justify-content-between small">
-        <span id="currentTime">0:00</span>
-          <div id="recordInfo" class="text-center w-100 small"></div>
-        <span id="duration">0:00</span>
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h4 id="selectedTitle" class="mb-0"></h4>
+        <button id="retranscribeBtn" class="btn btn-sm btn-outline-danger" style="display:none;">Распознать
+          заново</button>
+      </div>
+      <div class="mb-2 d-flex align-items-center gap-2">
+        <input type="text" id="localSearch" class="form-control form-control-sm" placeholder="Поиск в тексте..."
+          style="max-width: 250px;">
+        <button id="prevMatch" class="btn btn-sm btn-outline-secondary">←</button>
+        <button id="nextMatch" class="btn btn-sm btn-outline-secondary">→</button>
+        <span id="matchCounter" class="text-muted small ms-2"></span>
+      </div>
+      <div class="transcript-viewer" id="transcriptBox">
+        <p class="text-muted text-center mt-5">Выберите аудиозапись для просмотра протокола</p>
       </div>
     </div>
-    <label class="me-2">Скорость:</label>
-    <select id="playbackRate" class="form-select form-select-sm" style="width: auto;">
-      <option value="0.5">0.5×</option>
-      <option value="0.75">0.75×</option>
-      <option value="1" selected>1×</option>
-      <option value="1.25">1.25×</option>
-      <option value="1.5">1.5×</option>
-      <option value="2">2×</option>
-    </select>
-    <label class="ms-3 me-2">Громкость:</label>
-    <input type="range" id="volumeSlider" min="0" max="2" step="0.01" value="1" style="width: 150px;">
   </div>
-</div>
 
-<script>
-const transcriptBox = $('#transcriptBox');
-const audio = document.getElementById('audioPlayer');
-let matchIndices = [];
-let currentMatchIndex = -1;
+  <!-- Глобальный плеер -->
+  <div class="audio-player-bar">
+    <audio id="audioPlayer" style="display: none">
+      <source id="audioSource" src="" type="audio/mpeg">
+    </audio>
+    <div class="d-flex align-items-center gap-3">
+      <button class="btn btn-sm btn-outline-primary" id="playPause">▶</button>
+      <div class="flex-grow-1">
+        <input type="range" id="seekBar" min="0" value="0" step="0.01" class="form-range">
+        <div class="d-flex justify-content-between small">
+          <span id="currentTime">0:00</span>
+          <div id="recordInfo" class="text-center w-100 small"></div>
+          <span id="duration">0:00</span>
+        </div>
+      </div>
+      <label class="me-2">Скорость:</label>
+      <select id="playbackRate" class="form-select form-select-sm" style="width: auto;">
+        <option value="0.5">0.5×</option>
+        <option value="0.75">0.75×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.25">1.25×</option>
+        <option value="1.5">1.5×</option>
+        <option value="2">2×</option>
+      </select>
+      <label class="ms-3 me-2">Громкость:</label>
+      <input type="range" id="volumeSlider" min="0" max="2" step="0.01" value="1" style="width: 150px;">
+    </div>
+  </div>
+  <div class="modal fade" id="retranscribeModal" tabindex="-1" aria-labelledby="retranscribeModalLabel"
+    aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="retranscribeModalLabel">Подтвердите действие</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          Результат распознавания будет <strong>удалён</strong>, а аудиозапись встанет в очередь на повторное
+          распознавание. Вы уверены?
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отменить</button>
+          <button type="button" class="btn btn-danger" id="confirmRetranscribe">Подтвердить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="position-fixed bottom-0 start-0 p-3" style="z-index: 9999">
+    <div id="copyToastContainer"></div>
+  </div>
+  
+  <script>
+    const transcriptBox = $('#transcriptBox');
+    const audio = document.getElementById('audioPlayer');
+    let matchIndices = [];
+    let currentMatchIndex = -1;
 
-function clearMatchHighlights() {
-    $('.phrase-item').removeClass('match-active').each(function () {
+    function clearMatchHighlights() {
+      $('.phrase-item').removeClass('match-active').each(function () {
         this.innerHTML = $(this).text();
+      });
+      $('#matchCounter').text('');
+    }
+
+    $('#clearFilters').on('click', function () {
+      $('#searchForm')[0].reset();
+      $('#recordList').empty();
+      $('#foundCount').text(0);
     });
-    $('#matchCounter').text('');
-}
 
-$('#clearFilters').on('click', function () {
-    $('#searchForm')[0].reset();
-    $('#recordList').empty();
-    $('#foundCount').text(0);
-});
-
-$('#searchForm').on('submit', function(e) {
-    e.preventDefault();
-    const query = $(this).serialize();
-    $.getJSON('/api/search?' + query, function(data) {
+    $('#searchForm').on('submit', function (e) {
+      e.preventDefault();
+      const query = $(this).serialize();
+      $.getJSON('/api/search?' + query, function (data) {
         let html = '<ul class="list-group">';
         data.forEach(rec => {
-            html += `<li class="list-group-item list-group-item-action d-flex justify-content-between align-items-start" data-id="${rec.id}">
-                <div class="form-check">
-                    <input class="form-check-input record-checkbox" type="checkbox" value="${rec.id}">
-                </div>
-                <div class="ms-2 me-auto">
-                    <div class="fw-bold">${rec.case_number} ${rec.user_folder}</div>
-                    <div><small>${new Date(rec.date).toLocaleString()}</small></div>
-                    <div><small class="text-muted">${rec.comment || ''}</small></div>
-                </div>
-            </li>`;
+          html += `<li class="list-group-item list-group-item-action d-flex justify-content-between align-items-start" data-id="${rec.id}" data-path="${rec.file_path}">
+          <div class="form-check">
+            <input class="form-check-input record-checkbox" type="checkbox" value="${rec.id}">
+          </div>
+          <div class="ms-2 me-auto">
+            <div class="fw-bold">${rec.case_number} ${rec.user_folder}</div>
+            <div><small>${new Date(rec.date).toLocaleString()}</small></div>
+            <div><small class="text-muted">${rec.comment || ''}</small></div>
+          </div>
+          ${rec.recognized_text_path ? '<div class="text-primary fw-bold">Т</div>' : ''}
+</li>`;
         });
         html += '</ul>';
         $('#foundCount').text(data.length);
         $('#recordList').html(html);
+      });
     });
-});
 
-$('#localSearch').on('input', function () {
-    const query = $(this).val().trim().toLowerCase();
-    matchIndices = [];
-    currentMatchIndex = -1;
-    clearMatchHighlights();
-    if (!query) return;
+    $('#localSearch').on('input', function () {
+      const query = $(this).val().trim().toLowerCase();
+      matchIndices = [];
+      currentMatchIndex = -1;
+      clearMatchHighlights();
+      if (!query) return;
 
-    $('.phrase-item').each(function (i) {
+      $('.phrase-item').each(function (i) {
         const original = $(this).text();
         if (original.toLowerCase().includes(query)) {
-            matchIndices.push(i);
-            const regex = new RegExp(`(${query})`, 'gi');
-            this.innerHTML = original.replace(regex, '<mark>$1</mark>');
+          matchIndices.push(i);
+          const regex = new RegExp(`(${query})`, 'gi');
+          this.innerHTML = original.replace(regex, '<mark>$1</mark>');
         }
-    });
+      });
 
-    if (matchIndices.length > 0) {
+      if (matchIndices.length > 0) {
         currentMatchIndex = 0;
         scrollToMatch(currentMatchIndex);
         $('#matchCounter').text(`1 из ${matchIndices.length}`);
-    } else {
+      } else {
         $('#matchCounter').text('0 совпадений');
-    }
-});
+      }
+    });
 
 
-$('#recordList').on('click', '.list-group-item', function(e) {
-    if ($(e.target).is('input')) return;
-    $('.list-group-item').removeClass('record-active');
-    $(this).addClass('record-active');
-    const id = $(this).data('id');
-    $.getJSON('/api/record/' + id, function(data) {
+    $('#recordList').on('click', '.list-group-item', function (e) {
+      if ($(e.target).is('input')) return;
+      $('.list-group-item').removeClass('record-active');
+      $(this).addClass('record-active');
+      const id = $(this).data('id');
+      $('#retranscribeBtn').show().data('id', id);
+      $.getJSON('/api/record/' + id, function (data) {
         const textQuery = $('[name="text_query"]').val().trim().toLowerCase();
         matchIndices = [];
         currentMatchIndex = -1;
@@ -251,165 +295,225 @@ $('#recordList').on('click', '.list-group-item', function(e) {
         currentMatchIndex = -1;
         $('#matchCounter').text('');
         if (data.phrases.length === 0) {
-            transcriptBox.append('<p class="text-muted text-center mt-5">У выбранной записи отсутствует протокол.</p>');
-            return;
+          transcriptBox.append('<p class="text-muted text-center mt-5">У выбранной записи отсутствует протокол.</p>');
+          return;
         }
-data.phrases.forEach((p, i) => {
-    if (matchIndices.length > 0) {
-        currentMatchIndex = 0;
-        scrollToMatch(currentMatchIndex);
-        $('#matchCounter').text(`1 из ${matchIndices.length}`);
-    }
-    let text = p.text;
-    if (queryFromSearch && text.toLowerCase().includes(queryFromSearch)) {
-        const regex = new RegExp(`(${queryFromSearch})`, 'gi');
-        text = text.replace(regex, '<mark>$1</mark>');
-        matchIndices.push(i);
-    }
-    const el = $('<div>')
-        .addClass('phrase-item')
-        .attr('data-start', p.start)
-        .attr('data-end', p.end)
-        .html(text);
-    transcriptBox.append(el);
+        data.phrases.forEach((p, i) => {
+          if (matchIndices.length > 0) {
+            currentMatchIndex = 0;
+            scrollToMatch(currentMatchIndex);
+            $('#matchCounter').text(`1 из ${matchIndices.length}`);
+          }
+          let text = p.text;
+          if (queryFromSearch && text.toLowerCase().includes(queryFromSearch)) {
+            const regex = new RegExp(`(${queryFromSearch})`, 'gi');
+            text = text.replace(regex, '<mark>$1</mark>');
+            matchIndices.push(i);
+          }
+          const el = $('<div>')
+            .addClass('phrase-item')
+            .attr('data-start', p.start)
+            .attr('data-end', p.end)
+            .html(text);
+          transcriptBox.append(el);
 
-});
+        });
+      });
     });
-});
 
-// Подсветка активной фразы и автопрокрутка
-let lastActive = null;
-let isUserScrolling = false;
-let scrollTimeout = null;
+    // Подсветка активной фразы и автопрокрутка
+    let lastActive = null;
+    let isUserScrolling = false;
+    let scrollTimeout = null;
 
-transcriptBox.on('scroll', function () {
-    isUserScrolling = true;
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
+    transcriptBox.on('scroll', function () {
+      isUserScrolling = true;
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
         isUserScrolling = false;
-    }, 2000);
-});
+      }, 2000);
+    });
 
-setInterval(() => {
-    const current = audio.currentTime;
-    const phrases = $('.phrase-item');
-    let newActive = null;
+    setInterval(() => {
+      const current = audio.currentTime;
+      const phrases = $('.phrase-item');
+      let newActive = null;
 
-    phrases.each(function () {
+      phrases.each(function () {
         const start = parseFloat(this.dataset.start);
         const end = parseFloat(this.dataset.end);
         const isActive = current >= start && current <= end;
         $(this).toggleClass('phrase-active', isActive);
         if (isActive) newActive = this;
-    });
+      });
 
-    if (newActive && newActive !== lastActive && !isUserScrolling) {
+      if (newActive && newActive !== lastActive && !isUserScrolling) {
         lastActive = newActive;
         const el = $(newActive);
         $('html, body').stop(); // отмена предыдущей анимации, если была
         transcriptBox.stop().animate({
-            scrollTop: el.position().top + transcriptBox.scrollTop() - transcriptBox.height() / 2 + el.height() / 2
+          scrollTop: el.position().top + transcriptBox.scrollTop() - transcriptBox.height() / 2 + el.height() / 2
         }, 500);
-    }
-}, 400);
+      }
+    }, 400);
 
-transcriptBox.on('click', '.phrase-item', function() {
-    const start = parseFloat(this.dataset.start);
-    audio.currentTime = start;
-    audio.play();
-    $('#playPause').text('⏸');
-});
+    transcriptBox.on('click', '.phrase-item', function () {
+      const start = parseFloat(this.dataset.start);
+      audio.currentTime = start;
+      audio.play();
+      $('#playPause').text('⏸');
+    });
 
-transcriptBox.on('scroll', function() {
-    isUserScrolling = true;
-    clearTimeout($.data(this, 'scrollTimer'));
-    $.data(this, 'scrollTimer', setTimeout(() => {
+    transcriptBox.on('scroll', function () {
+      isUserScrolling = true;
+      clearTimeout($.data(this, 'scrollTimer'));
+      $.data(this, 'scrollTimer', setTimeout(() => {
         isUserScrolling = false;
-    }, 1500));
-});
+      }, 1500));
+    });
 
-$('#downloadSelected').on('click', function() {
-    const selectedIds = $('.record-checkbox:checked').map(function() {
+    $('#downloadSelected').on('click', function () {
+      const selectedIds = $('.record-checkbox:checked').map(function () {
         return 'id=' + $(this).val();
-    }).get().join('&');
-    if (!selectedIds) return alert('Выберите хотя бы одну запись для скачивания');
-    window.location.href = '/api/download?' + selectedIds;
-});
+      }).get().join('&');
+      if (!selectedIds) return alert('Выберите хотя бы одну запись для скачивания');
+      window.location.href = '/api/download?' + selectedIds;
+    });
 
-function scrollToMatch(index) {
-    const phrases = $('.phrase-item');
-    const el = phrases.eq(matchIndices[index]);
-    if (el.length) {
+    function scrollToMatch(index) {
+      const phrases = $('.phrase-item');
+      const el = phrases.eq(matchIndices[index]);
+      if (el.length) {
         transcriptBox.stop().animate({
-            scrollTop: el.position().top + transcriptBox.scrollTop() - transcriptBox.height() / 2 + el.height() / 2
+          scrollTop: el.position().top + transcriptBox.scrollTop() - transcriptBox.height() / 2 + el.height() / 2
         }, 500);
         phrases.removeClass('match-active');
         el.addClass('match-active');
         $('#matchCounter').text(`${index + 1} из ${matchIndices.length}`);
+      }
     }
-}
+
+    $('#retranscribeBtn').on('click', function () {
+      $('#retranscribeModal').modal('show');
+    });
+    $('#confirmRetranscribe').on('click', function () {
+      const id = $('#retranscribeBtn').data('id');
+      $.post(`/api/reset_transcription/${id}`, function () {
+        showToast('Протокол отправлен на повторное распознавание');
+        $('#retranscribeModal').modal('hide');
+        $('#retranscribeBtn').hide();
+        $('#selectedTitle').text('');
+        $('#transcriptBox').html('<p class="text-muted text-center mt-5">Выберите аудиозапись для просмотра протокола</p>');
+      }).fail(function () {
+        showToast('Не удалось отправить на повторное распознавание', 'Ошибка');
+      });
+    });
+
+    $('#nextMatch').on('click', function () {
+      if (matchIndices.length === 0) return;
+      currentMatchIndex = (currentMatchIndex + 1) % matchIndices.length;
+      scrollToMatch(currentMatchIndex);
+    });
+
+    $('#prevMatch').on('click', function () {
+      if (matchIndices.length === 0) return;
+      currentMatchIndex = (currentMatchIndex - 1 + matchIndices.length) % matchIndices.length;
+      scrollToMatch(currentMatchIndex);
+    });
 
 
-$('#nextMatch').on('click', function () {
-    if (matchIndices.length === 0) return;
-    currentMatchIndex = (currentMatchIndex + 1) % matchIndices.length;
-    scrollToMatch(currentMatchIndex);
-});
+    const seekBar = document.getElementById('seekBar');
+    const currentTimeDisplay = document.getElementById('currentTime');
+    const durationDisplay = document.getElementById('duration');
 
-$('#prevMatch').on('click', function () {
-    if (matchIndices.length === 0) return;
-    currentMatchIndex = (currentMatchIndex - 1 + matchIndices.length) % matchIndices.length;
-    scrollToMatch(currentMatchIndex);
-});
+    let audioCtx = new AudioContext();
+    let sourceNode = audioCtx.createMediaElementSource(audio);
+    let gainNode = audioCtx.createGain();
+    sourceNode.connect(gainNode).connect(audioCtx.destination);
 
+    $('#playPause').on('click', function () {
+      if (audio.paused) {
+        audioCtx.resume();
+        audio.play();
+        $(this).text('⏸');
+      } else {
+        audio.pause();
+        $(this).text('▶');
+      }
+    });
 
-const seekBar = document.getElementById('seekBar');
-const currentTimeDisplay = document.getElementById('currentTime');
-const durationDisplay = document.getElementById('duration');
+    $('#playbackRate').on('change', function () {
+      audio.playbackRate = parseFloat(this.value);
+    });
 
-let audioCtx = new AudioContext();
-let sourceNode = audioCtx.createMediaElementSource(audio);
-let gainNode = audioCtx.createGain();
-sourceNode.connect(gainNode).connect(audioCtx.destination);
+    $('#volumeSlider').on('input', function () {
+      gainNode.gain.value = parseFloat(this.value);
+    });
 
-$('#playPause').on('click', function () {
-  if (audio.paused) {
-    audioCtx.resume();
-    audio.play();
-    $(this).text('⏸');
-  } else {
-    audio.pause();
-    $(this).text('▶');
-  }
-});
+    function showToast(message, title = "Уведомление") {
+      const toastId = 'toast-' + Date.now();
+      const toastHtml = `
+  <div id="${toastId}" class="toast align-items-center text-bg-dark border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex">
+      <div class="toast-body">
+        ${message}
+      </div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Закрыть"></button>
+    </div>
+  </div>`;
 
-$('#playbackRate').on('change', function () {
-  audio.playbackRate = parseFloat(this.value);
-});
+      $('#copyToastContainer').append(toastHtml);
+      const toastEl = new bootstrap.Toast(document.getElementById(toastId), { delay: 3000 });
+      toastEl.show();
+    }
 
-$('#volumeSlider').on('input', function () {
-  gainNode.gain.value = parseFloat(this.value);
-});
+    $('#copyPaths').on('click', function () {
+      let paths = $('.record-checkbox:checked').map(function () {
+        return $(this).closest('.list-group-item').data('path');
+      }).get();
 
-seekBar.addEventListener('input', function () {
-  audio.currentTime = parseFloat(this.value);
-});
+      if (paths.length === 0) {
+        const active = $('.record-active');
+        if (active.length > 0) {
+          paths = [active.data('path')];
+        }
+      }
 
-audio.addEventListener('loadedmetadata', function () {
-  seekBar.max = audio.duration;
-  durationDisplay.textContent = formatTime(audio.duration);
-});
+      if (paths.length === 0) {
+        showToast('Ничего не выбрано', 'Ошибка');
+        return;
+      }
 
-audio.addEventListener('timeupdate', function () {
-  seekBar.value = audio.currentTime;
-  currentTimeDisplay.textContent = formatTime(audio.currentTime);
-});
+      const tempArea = document.createElement("textarea");
+      tempArea.value = paths.join("\n");
+      document.body.appendChild(tempArea);
+      tempArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempArea);
 
-function formatTime(seconds) {
-  const min = Math.floor(seconds / 60);
-  const sec = Math.floor(seconds % 60);
-  return `${min}:${sec < 10 ? '0' : ''}${sec}`;
-}
-</script>
+      showToast('Путь скопирован в буфер обмена', 'Готово');
+    });
+
+    seekBar.addEventListener('input', function () {
+      audio.currentTime = parseFloat(this.value);
+    });
+
+    audio.addEventListener('loadedmetadata', function () {
+      seekBar.max = audio.duration;
+      durationDisplay.textContent = formatTime(audio.duration);
+    });
+
+    audio.addEventListener('timeupdate', function () {
+      seekBar.value = audio.currentTime;
+      currentTimeDisplay.textContent = formatTime(audio.currentTime);
+    });
+
+    function formatTime(seconds) {
+      const min = Math.floor(seconds / 60);
+      const sec = Math.floor(seconds % 60);
+      return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+    }
+  </script>
 </body>
+
 </html>
