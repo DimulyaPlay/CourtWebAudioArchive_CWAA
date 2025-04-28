@@ -225,6 +225,8 @@
 
     $('#searchForm').on('submit', function (e) {
       e.preventDefault();
+      $('#localSearch').val('');
+      clearMatchHighlights();
       const query = $(this).serialize();
       $.getJSON('/api/search?' + query, function (data) {
         let html = '<ul class="list-group">';
@@ -286,9 +288,11 @@
         $('#selectedTitle').text(data.title);
         $('#recordInfo').text(data.title);
         $('#audioSource').attr('src', data.audio_url);
+        audio.pause();
+        $('#playPause').text('▶');
         audio.load();
         transcriptBox.empty();
-        // Сброс поиска
+        transcriptBox.scrollTop(0);
         const queryFromSearch = $('[name="text_query"]').val().trim().toLowerCase();
         $('#localSearch').val(queryFromSearch);
         matchIndices = [];
