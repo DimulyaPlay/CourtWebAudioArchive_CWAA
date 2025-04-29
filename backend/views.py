@@ -1,6 +1,7 @@
 from flask import render_template, Blueprint, request, jsonify
 import os
 from datetime import datetime
+from pydub import AudioSegment
 from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
@@ -35,7 +36,19 @@ def home_redirector():
                                    courtrooms=get_available_courtrooms(),
                                    title='Архивация аудиопротоколов',
                                    error="Неверный формат файла. Поддерживается только MP3.")
-
+        try:
+            audio_segment = AudioSegment.from_file(audio_file.stream, format="mp3")
+            duration_sec = len(audio_segment) / 1000
+            if duration_sec < 3:
+                return render_template('index.html', directories=os.listdir(config['public_audio_path']),
+                                       courtrooms=get_available_courtrooms(),
+                                       title='Архивация аудиопротоколов',
+                                       error="Файл слишком короткий. Минимальная длина — 3 секунды.")
+        except Exception as e:
+            return render_template('index.html', directories=os.listdir(config['public_audio_path']),
+                                   courtrooms=get_available_courtrooms(),
+                                   title='Архивация аудиопротоколов',
+                                   error="Файл поврежден или не является корректным MP3.")
         # Определяем базовый путь
         base_path = config['closed_audio_path'] if closed_session else config['public_audio_path']
         user_folder_path = os.path.join(base_path, user_folder)

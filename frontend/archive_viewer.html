@@ -146,6 +146,7 @@
         <button id="prevMatch" class="btn btn-sm btn-outline-secondary">←</button>
         <button id="nextMatch" class="btn btn-sm btn-outline-secondary">→</button>
         <span id="matchCounter" class="text-muted small ms-2"></span>
+        <span id="queueCounter" class="text-muted small ms-auto">Протоколов в очереди: ?</span>
       </div>
       <div class="transcript-viewer" id="transcriptBox">
         <p class="text-muted text-center mt-5">Выберите аудиозапись для просмотра протокола</p>
@@ -335,7 +336,7 @@
       clearTimeout(scrollTimeout);
       scrollTimeout = setTimeout(() => {
         isUserScrolling = false;
-      }, 2000);
+      }, 8000);
     });
 
     setInterval(() => {
@@ -366,14 +367,6 @@
       audio.currentTime = start;
       audio.play();
       $('#playPause').text('⏸');
-    });
-
-    transcriptBox.on('scroll', function () {
-      isUserScrolling = true;
-      clearTimeout($.data(this, 'scrollTimer'));
-      $.data(this, 'scrollTimer', setTimeout(() => {
-        isUserScrolling = false;
-      }, 1500));
     });
 
     $('#downloadSelected').on('click', function () {
@@ -517,6 +510,12 @@
       const sec = Math.floor(seconds % 60);
       return `${min}:${sec < 10 ? '0' : ''}${sec}`;
     }
+    function updateQueueCounter() {
+    $.getJSON('/api/get_vr_queue_len', function (data) {
+    $('#queueCounter').text(`Протоколов в очереди: ${data.records_to_vr}`);
+    });
+    }
+    updateQueueCounter();
   </script>
 </body>
 

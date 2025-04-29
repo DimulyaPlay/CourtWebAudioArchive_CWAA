@@ -164,3 +164,13 @@ def reset_transcription(record_id):
     session.commit()
     session.close()
     return jsonify({"status": "ok"})
+
+
+@api.route('/get_vr_queue_len')
+def get_vr_queue_len():
+    session = Session()
+    records = session.query(AudioRecord).filter(
+        AudioRecord.recognize_text == True,
+        AudioRecord.recognized_text_path == None
+    ).all()
+    return jsonify({'records_to_vr':len(records)})

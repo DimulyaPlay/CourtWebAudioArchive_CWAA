@@ -76,9 +76,12 @@
           placeholder="Запишите здесь что-нибудь для того чтобы быстро найти этот аудиопротокол в будущем."></textarea>
       </div>
 
-      <div class="form-check mb-3">
+      <div class="form-check mb-0">
         <input type="checkbox" name="recognize_text" id="recognize_text" class="form-check-input">
         <label for="recognize_text" class="form-check-label">Перевести аудио в текст (Не работает для закрытых с.з.).</label>
+      </div>
+      <div class="mb-3">
+      <small id="vrQueueInfo" class="text-muted">Протоколов в очереди: ?</small>
       </div>
 
       <div class="form-check mb-3">
@@ -163,6 +166,18 @@
         this.value = '';
       }
     });
+    function updateVRQueueInfo() {
+    fetch('/api/get_vr_queue_len')
+    .then(response => response.json())
+    .then(data => {
+      document.getElementById('vrQueueInfo').textContent = `Протоколов в очереди: ${data.records_to_vr}`;
+    })
+    .catch(() => {
+      document.getElementById('vrQueueInfo').textContent = 'Протоколов в очереди: ошибка загрузки';
+    });
+    }
+    // Сразу обновить при загрузке страницы
+    updateVRQueueInfo();
   </script>
 </body>
 </html>

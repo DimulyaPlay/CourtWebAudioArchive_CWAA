@@ -29,6 +29,8 @@ os.makedirs('backend', exist_ok=True)
 
 # Nginx configuration template
 nginx_config_template = """
+pid nginx_temp.pid;
+
 events {
     worker_connections 1024;
 }
@@ -86,21 +88,33 @@ def start_nginx():
 
 def stop_nginx():
     global nginx_process
-    if nginx_process:
-        try:
-            nginx_proc = psutil.Process(nginx_process.pid)
-        except:
-            print('Процесс не найден', nginx_process.pid)
-            return
-        children = nginx_proc.children(recursive=True)
+    pid_file = "nginx_temp.pid"
+    if not os.path.exists(pid_file):
+        print("[NGINX] PID-файл не найден, возможно nginx уже завершён.")
+        return
+    try:
+        with open(pid_file, "r") as f:
+            master_pid = int(f.read().strip())
+        master_proc = psutil.Process(master_pid)
+        children = master_proc.children(recursive=True)
         for child in children:
             try:
                 child.terminate()
-                child.wait(timeout=3)
-            except psutil.NoSuchProcess:
-                pass
-        nginx_process.terminate()
-        nginx_process.wait()
+            except Exception as e:
+                print(f"[!] Не удалось завершить процесс {child.pid}: {e}")
+        master_proc.terminate()
+        _, alive = psutil.wait_procs([master_proc] + children, timeout=5)
+        for p in alive:
+            try:
+                p.kill()
+            except Exception as e:
+                print(f"[!] Не удалось принудительно убить процесс {p.pid}: {e}")
+        print(f"[NGINX] Завершено nginx PID={master_pid}")
+    except Exception as e:
+        print(f"[!] Ошибка при завершении nginx: {e}")
+    finally:
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
         nginx_process = None
 
 def start_flask():
