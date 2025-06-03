@@ -2,67 +2,72 @@
 
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta content="width=device-width, initial-scale=1.0" name="viewport">
   <title>{{ title }}</title>
+  <script src="assets/frameworks/jquery.min.js"></script>
   <script src="assets/frameworks/bootstrap.bundle.min.js"></script>
   <link href="assets/frameworks/bootstrap.min.css" rel="stylesheet">
   <link href="assets/style.css" rel="stylesheet">
 </head>
 
 <body>
-      <div class="container mt-5">
-        <div style="position: absolute; top: 20px; right: 20px; z-index: 1000;">
-      <a href="/archive" class="btn btn-outline-primary">Просмотр архива аудиопротоколов →</a>
+  <div class="container mt-2">
+    <div style="position: absolute; top: 20px; right: 20px; z-index: 1000;">
+      <a class="btn btn-outline-primary" href="/archive">Просмотр архива аудиопротоколов →</a>
     </div>
-    <h1 class="mb-4">{{ title }}</h1>
+    <h2 class="mb-2">{{ title }}</h2>
 
-    {% if error %}
-    <div class="alert alert-danger" role="alert">
-      {{ error }}
-    </div>
-    {% endif %}
+    <div id="upload-alert-container">
+      {% if error %}
+      <div class="alert alert-danger" role="alert">
+        {{ error }}
+      </div>
+      {% endif %}
 
-    {% if success %}
-    <div class="alert alert-success" role="alert">
-      <strong>Файл успешно загружен!</strong><br>
-      Прямая ссылка на файл:
-      <span id="file-link">{{ success }}</span>
-      <button class="btn btn-secondary btn-sm ml-2" onclick="copyToClipboard()">Копировать путь</button>
+      {% if success %}
+      <div class="alert alert-success" role="alert">
+        <strong>Файл успешно загружен!</strong><br>
+        Прямая ссылка на файл:
+        <span id="file-link">{{ success }}</span>
+        <button id="copy-path-btn" class="btn btn-secondary btn-sm ml-2">Копировать путь</button>
+      </div>
+      <div class="alert alert-info" id="custom-popup" role="alert" style="display: none;">
+        Путь скопирован в буфер обмена!
+      </div>
+      {% endif %}
     </div>
-    <div id="custom-popup" class="alert alert-info" role="alert" style="display: none;">
-      Путь скопирован в буфер обмена!
-    </div>
-    {% endif %}
 
-    <form action="/" method="POST" enctype="multipart/form-data">
-      <div class="mb-3">
-        <label for="user_folder" class="form-label">Выберите судью:</label>
-        <select name="user_folder" id="user_folder" class="form-select" required>
+
+    <form action="/" enctype="multipart/form-data" method="POST">
+      <div class="mb-2">
+        <label class="form-label" for="user_folder">Выберите судью:</label>
+        <select class="form-select" id="user_folder" name="user_folder" required>
           {% for folder in directories %}
           <option value="{{ folder }}">{{ folder }}</option>
           {% endfor %}
         </select>
       </div>
 
-      <div class="mb-3">
-        <label for="case_number" class="form-label">Номер дела:</label>
-        <input type="text" name="case_number" id="case_number" class="form-control" required
-          pattern="^[a-zA-Zа-яА-Я0-9]+-\d{1,5}(-\d+)*-\d{4}$" placeholder="Пример: 1-10-2025 или 4-17-3-2025">
+      <div class="mb-2">
+        <label class="form-label" for="case_number">Номер дела:</label>
+        <input class="form-control" id="case_number" name="case_number"
+          pattern="^[a-zA-Zа-яА-Я0-9]+-\d{1,5}(-\d+)*-\d{4}$" placeholder="Пример: 1-10-2025 или 4-17-3-2025" required
+          type="text">
       </div>
 
-      <div class="mb-3">
-        <label for="audio_date" class="form-label">Дата проведения:</label>
-        <input type="date" name="audio_date" id="audio_date" class="form-control" required>
+      <div class="mb-2">
+        <label class="form-label" for="audio_date">Дата проведения:</label>
+        <input class="form-control" id="audio_date" name="audio_date" required type="date">
       </div>
 
-      <div class="mb-3">
-        <label for="audio_time" class="form-label">Время проведения:</label>
-        <input type="time" name="audio_time" id="audio_time" class="form-control" required>
+      <div class="mb-2">
+        <label class="form-label" for="audio_time">Время проведения:</label>
+        <input class="form-control" id="audio_time" name="audio_time" required type="time">
       </div>
 
-      <div class="mb-3">
-        <label for="courtroom" class="form-label">Зал проведения заседания:</label>
-        <select name="courtroom" id="courtroom" class="form-select" required>
+      <div class="mb-2">
+        <label class="form-label" for="courtroom">Зал проведения заседания:</label>
+        <select class="form-select" id="courtroom" name="courtroom" required>
           <option value=""></option>
           {% for room in courtrooms %}
           <option value="{{ room }}">{{ room }}</option>
@@ -70,34 +75,42 @@
         </select>
       </div>
 
-      <div class="mb-3">
-        <label for="comment" class="form-label">Комментарий к аудиопротоколу:</label>
-        <textarea name="comment" id="comment" class="form-control" rows="2"
-          placeholder="Запишите здесь что-нибудь для того чтобы быстро найти этот аудиопротокол в будущем."></textarea>
+      <div class="mb-2">
+        <label class="form-label" for="comment">Комментарий к аудиопротоколу:</label>
+        <textarea class="form-control" id="comment" name="comment"
+          placeholder="Запишите здесь что-нибудь для того чтобы быстро найти этот аудиопротокол в будущем."
+          rows="2"></textarea>
       </div>
 
       <div class="form-check mb-0">
-        <input type="checkbox" name="recognize_text" id="recognize_text" class="form-check-input">
-        <label for="recognize_text" class="form-check-label">Перевести аудио в текст (Не работает для закрытых с.з.).</label>
+        <input class="form-check-input" id="recognize_text" name="recognize_text" type="checkbox">
+        <label class="form-check-label" for="recognize_text">Перевести аудио в текст (Не работает для закрытых
+          с.з.).</label>
       </div>
-      <div class="mb-3">
-      <small id="vrQueueInfo" class="text-muted">Протоколов в очереди: ?</small>
-      </div>
-
-      <div class="form-check mb-3">
-        <input type="checkbox" name="closed_session" id="closed_session" class="form-check-input">
-        <label for="closed_session" class="form-check-label">Закрытое судебное заседание</label>
+      <div class="mb-2">
+        <small class="text-muted" id="vrQueueInfo">Протоколов в очереди: ?</small>
       </div>
 
-      <div class="mb-3">
-        <label for="audio_file" class="form-label">Загрузить аудиофайл (MP3):</label>
-        <input type="file" name="audio_file" id="audio_file" class="form-control" accept=".mp3" required>
+      <div class="form-check mb-2">
+        <input class="form-check-input" id="closed_session" name="closed_session" type="checkbox">
+        <label class="form-check-label" for="closed_session">Закрытое судебное заседание</label>
       </div>
 
-      <button type="submit" class="btn btn-primary">
-        <span class="upload-text">Загрузить</span>
-        <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true" style="display: none;"></span>
-      </button>
+      <div class="mb-2">
+        <label class="form-label" for="audio_file">Прикрепить MP3 с компьютера:</label>
+        <input accept=".mp3" class="form-control" id="audio_file" name="audio_file" required type="file">
+      </div>
+
+      <div class="mb-2">
+        <label class="form-label" for="import-from-femida">ИЛИ выбрать запись из Фемиды:</label>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-outline-primary" id="import-from-femida" type="button">📎 Прикрепить из Фемиды</button>
+          <span class="text-success small" id="imported-label"></span>
+        </div>
+      </div>
+
+      <input id="imported_temp_id" name="imported_temp_id" type="hidden">
+      <button class="btn btn-primary" type="submit">Подтвердить и сохранить на сервере</button>
       <div class="upload-spinner">
         <div class="spinner-border text-primary" style="width: 5rem; height: 5rem;"></div>
       </div>
@@ -108,76 +121,268 @@
     <div id="drop-text">Отпустите файл здесь, чтобы прикрепить его к загрузке</div>
   </div>
 
+  <div class="modal fade" id="femidaModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Выбор записи из Фемиды</h5>
+          <button class="btn-close" data-bs-dismiss="modal" type="button"></button>
+        </div>
+        <div class="modal-body">
+          <select class="form-select mb-2" id="femida-courtroom">
+            <option value="">Выберите зал...</option>
+          </select>
+          <input class="form-control mb-2" id="femida-filter" placeholder="Фильтр по названию..." type="text">
+          <div id="femida-records" style="max-height: 300px; overflow-y: auto;"></div>
+          <div class="mt-3" id="femida-preview" style="display:none;">
+            <audio controls id="femida-audio" style="width: 100%"></audio>
+            <button class="btn btn-sm btn-danger mt-2" id="remove-selection">Удалить выбор</button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Отмена</button>
+          <button class="btn btn-primary" id="convert-femida" type="button">Конвертировать</button>
+          <button class="btn btn-success" disabled id="confirm-femida-import" type="button">Подтвердить и
+            прикрепить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="position-fixed bottom-0 start-0 p-3" style="z-index: 9999">
+    <div id="copyToastContainer"></div>
+  </div>
   <script>
-    // Drag and Drop функционал
-    const dropOverlay = document.getElementById('drop-overlay');
-    const audioInput = document.getElementById('audio_file');
+    $(function () {
+      const dropOverlay = $('#drop-overlay');
+      const audioInput = $('#audio_file');
+      let selectedPath = null;
+      let convertedFile = null;
+      let convertedDate = null;
 
-    document.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropOverlay.style.display = 'flex';
-    });
+      // Drag'n'drop
+      $(document).on('dragover', function (e) {
+        e.preventDefault();
+        dropOverlay.show();
+      }).on('dragleave', function (e) {
+        if (e.originalEvent.relatedTarget === null) {
+          dropOverlay.hide();
+        }
+      }).on('drop', function (e) {
+        e.preventDefault();
+        dropOverlay.hide();
+        const files = e.originalEvent.dataTransfer.files;
+        if (files.length > 0 && files[0].type === 'audio/mpeg') {
+          const dt = new DataTransfer();
+          dt.items.add(files[0]);
+          audioInput[0].files = dt.files;
+          audioInput.trigger('change');
+        }
+      });
 
-    document.addEventListener('dragleave', (e) => {
-      if (e.relatedTarget === null) {
-        dropOverlay.style.display = 'none';
+      // Валидация формата mp3
+      audioInput.on('change', function () {
+        const file = this.files[0];
+        if (file && file.type !== 'audio/mpeg') {
+          alert('Пожалуйста, выберите файл в формате MP3');
+          this.value = '';
+        }
+      });
+
+      // Кнопка "Прикрепить из Фемиды"
+      $('#import-from-femida').on('click', function () {
+        $('#femida-courtroom').empty().append('<option value="">Загрузка...</option>');
+        $('#femida-records').empty();
+        $('#femida-preview').hide();
+        $('#femida-audio').attr('src', '');
+        $('#confirm-femida-import').prop('disabled', true);
+        $('#femidaModal').modal('show');
+
+        $.getJSON('/api/import_sources', function (data) {
+          const select = $('#femida-courtroom').empty().append('<option value="">Выберите зал...</option>');
+          data.forEach(item => {
+            select.append(`<option value="${item.path}" data-name="${item.name}">${item.name}</option>`);
+          });
+        });
+      });
+
+      $('#femida-courtroom').on('change', function () {
+        const path = $(this).val();
+        const list = $('#femida-records').empty();
+        if (!path) return;
+        $.getJSON('/api/import_cases', { path }, function (entries) {
+          entries.forEach(name => {
+            list.append(`<div class="list-group-item femida-case" data-path="${path}/${name}" data-name="${name}">${name}</div>`);
+          });
+        });
+      });
+
+      $('#femida-filter').on('input', function () {
+        const val = $(this).val().toLowerCase();
+        $('.femida-case').each(function () {
+          $(this).toggle($(this).text().toLowerCase().includes(val));
+        });
+      });
+
+      $(document).on('click', '.femida-case', function () {
+        $('.femida-case').removeClass('active');
+        $(this).addClass('active');
+        selectedPath = $(this).data('path');
+        $('#confirm-femida-import').prop('disabled', true);
+        $('#femida-preview').hide();
+        convertedFile = null;
+      });
+
+      $('#convert-femida').on('click', function () {
+        if (!selectedPath) return;
+        $('body').append('<div id="loading-overlay">⏳ Обработка...</div>');
+        $.post('/api/convert_case', { path: selectedPath }, function (response) {
+          $('#loading-overlay').remove();
+          $('#audio_file').prop('disabled', true);
+          $('#femida-audio').attr('src', '/api/audio/' + encodeURIComponent(response.temp_id.replace(/^.*[\\/]/, '')));
+          $('#femida-preview').show();
+          convertedFile = response.temp_id;
+          convertedDate = response.date;
+          $('#confirm-femida-import').prop('disabled', false);
+        }).fail(function () {
+          alert('Ошибка при конвертации');
+          $('#loading-overlay').remove();
+        });
+      });
+
+      $('#remove-selection').on('click', function () {
+        $('#femida-preview').hide();
+        $('#femida-audio').attr('src', '');
+        $('#confirm-femida-import').prop('disabled', true);
+        convertedFile = null;
+      });
+
+      $('#confirm-femida-import').on('click', function () {
+        $('#femidaModal').modal('hide');
+        $('#imported_temp_id').val(convertedFile);
+        $('#audio_date').val(convertedDate);
+        $('#audio_file').prop('disabled', true).prop('required', false);
+
+        const selectedRoom = $('#femida-courtroom option:selected').text().trim().toLowerCase();
+        $('#courtroom option').each(function () {
+          if ($(this).text().trim().toLowerCase() === selectedRoom) {
+            $(this).prop('selected', true);
+          }
+        });
+
+        const selectedName = $('.femida-case.active').data('name') || 'неизвестная запись';
+        const labelText = `✔ Импортировано: ${selectedName}`;
+        $('#imported-label').text(labelText);
+        if (!$('#imported-label').length) {
+          $('<div class="text-success mt-2" id="imported-label">')
+            .text(labelText)
+            .insertAfter('#import-from-femida');
+        }
+      });
+
+      function updateVRQueueInfo() {
+        fetch('/api/get_vr_queue_len')
+          .then(res => res.json())
+          .then(data => $('#vrQueueInfo').text(`Протоколов в очереди: ${data.records_to_vr}`))
+          .catch(() => $('#vrQueueInfo').text('Протоколов в очереди: ошибка загрузки'));
       }
-    });
 
-    document.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropOverlay.style.display = 'none';
+      updateVRQueueInfo();
 
-      const files = e.dataTransfer.files;
-      if (files.length > 0 && files[0].type === 'audio/mpeg') {
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(files[0]);
-        audioInput.files = dataTransfer.files;
-        audioInput.dispatchEvent(new Event('change'));
-      }
-    });
+      $(document).on('click', '#copy-path-btn', function () {
+        const filePath = $('#file-link').text();
+        const tempTextArea = $('<textarea>').val(filePath).appendTo('body');
+        tempTextArea[0].select();
+        document.execCommand('copy');
+        tempTextArea.remove();
 
-    // Блокировка кнопки и спиннер
-    document.querySelector('form').addEventListener('submit', function () {
-      this.classList.add('uploading');
-      this.querySelector('button[type="submit"]').disabled = true;
-    });
-    function copyToClipboard() {
-      const filePath = document.getElementById("file-link").innerText;
-      const tempTextArea = document.createElement("textarea");
-      tempTextArea.value = filePath;
-      document.body.appendChild(tempTextArea);
-      tempTextArea.select();
-      document.execCommand('copy');
-      document.body.removeChild(tempTextArea);
-      // Показываем кастомное уведомление
-      const popup = document.getElementById("custom-popup");
-      popup.style.display = 'block';
+        showToast('Путь скопирован в буфер обмена', 'Готово');
+      });
 
-      // Скрываем его через 3 секунды
-      setTimeout(() => {
-        popup.style.display = 'none';
-      }, 3000);
-    }
-    document.getElementById('audio_file').addEventListener('change', function (e) {
-      const file = e.target.files[0];
-      if (file && file.type !== 'audio/mpeg') {
-        alert('Пожалуйста, выберите файл в формате MP3');
-        this.value = '';
-      }
-    });
-    function updateVRQueueInfo() {
-    fetch('/api/get_vr_queue_len')
-    .then(response => response.json())
-    .then(data => {
-      document.getElementById('vrQueueInfo').textContent = `Протоколов в очереди: ${data.records_to_vr}`;
+      $('form').on('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        $('.alert').remove();
+        $(this).addClass('uploading');
+        $(this).find('button[type="submit"]').prop('disabled', true);
+
+        $.ajax({
+          url: '/upload_audio',
+          method: 'POST',
+          data: formData,
+          processData: false,
+          contentType: false,
+          success: function (response) {
+            const path = response.success;
+            $('#upload-alert-container').html(`
+    <div class="alert alert-success" role="alert">
+      <strong>Файл успешно загружен!</strong><br>
+      Прямая ссылка на файл:
+      <span id="file-link">${path}</span>
+      <button id="copy-path-btn" class="btn btn-secondary btn-sm ml-2">Копировать путь</button>
+    </div>
+    <div class="alert alert-info" id="custom-popup" role="alert" style="display: none;">
+      Путь скопирован в буфер обмена!
+    </div>
+  `);
+            $('form')[0].reset();
+            // Очистка следов Фемиды
+            $('#imported-label').remove();
+            $('#imported_temp_id').val('');
+            $('#audio_file').prop('disabled', false).prop('required', true);
+          },
+          error: function (xhr) {
+            const msg = xhr.responseJSON?.error || 'Неизвестная ошибка';
+            $('#upload-alert-container').html(`
+    <div class="alert alert-danger" role="alert">${msg}</div>
+  `);
+          },
+          complete: function () {
+            $('form').removeClass('uploading');
+            $('form').find('button[type="submit"]').prop('disabled', false);
+          }
+        });
+      });
     })
-    .catch(() => {
-      document.getElementById('vrQueueInfo').textContent = 'Протоколов в очереди: ошибка загрузки';
-    });
+    function showToast(message, title = "Уведомление") {
+      const toastId = 'toast-' + Date.now();
+      const toastHtml = `
+      <div id="${toastId}" class="toast align-items-center text-bg-dark border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true">
+        <div class="d-flex">
+          <div class="toast-body">
+            ${message}
+          </div>
+          <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Закрыть"></button>
+        </div>
+      </div>`;
+      $('#copyToastContainer').append(toastHtml);
+      new bootstrap.Toast(document.getElementById(toastId), { delay: 3000 }).show();
     }
-    // Сразу обновить при загрузке страницы
-    updateVRQueueInfo();
   </script>
+  <style>
+    #loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(255, 255, 255, 0.8);
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+    }
+
+    .femida-case:hover {
+      cursor: pointer;
+      background: #eef;
+    }
+
+    .femida-case.active {
+      background: #cce;
+      font-weight: bold;
+    }
+  </style>
 </body>
+
 </html>

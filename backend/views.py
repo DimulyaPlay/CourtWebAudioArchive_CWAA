@@ -19,61 +19,63 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @views.route('/', methods=['GET', 'POST'])
-def home_redirector():
+def home_redirector(ajax=False):
+    if request.method == 'GET':
+        return render_template('index.html', directories=os.listdir(config['public_audio_path']),
+                               courtrooms=get_available_courtrooms(),
+                               title='Архивация аудиопротоколов')
     if request.method == 'POST':
         user_folder = request.form.get('user_folder')
         case_number = request.form.get('case_number')
-        audio_file = request.files['audio_file']
+        audio_file = request.files.get('audio_file')
         audio_date = request.form.get('audio_date')
         audio_time = request.form.get('audio_time')
         courtroom = request.form.get('courtroom')
         comment = request.form.get('comment')
         recognize_text = request.form.get('recognize_text')
         closed_session = request.form.get('closed_session')
+        imported_temp_id = request.form.get('imported_temp_id')
         temp_path = None
-        if not user_folder or not case_number or not audio_date or not audio_time or not audio_file:
-            return render_template('index.html', directories=os.listdir(config['public_audio_path']),
-                                   courtrooms=get_available_courtrooms(),
-                                   title='Архивация аудиопротоколов',
-                                   error="Все поля обязательны для заполнения.")
-        if not allowed_file(audio_file.filename):
-            return render_template('index.html', directories=os.listdir(config['public_audio_path']),
-                                   courtrooms=get_available_courtrooms(),
-                                   title='Архивация аудиопротоколов',
-                                   error="Неверный формат файла. Поддерживается только MP3.")
+        if not user_folder or not case_number or not audio_date or not audio_time:
+            if ajax:
+                return jsonify({'error': "Все поля обязательны для заполнения."}), 400
+
+        if not audio_file and not imported_temp_id:
+            if ajax:
+                return jsonify({'error': "Не выбран файл и не прикреплена запись из Фемиды."}), 400
 
         try:
-            # Сохраняем файл во временный путь
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-            temp_path = tmp.name
-            tmp.close()
-            audio_file.save(temp_path)
+            if imported_temp_id:
+                if not os.path.exists(imported_temp_id):
+                    if ajax:
+                        return jsonify({'error': "Временный файл от Фемиды не найден."}), 400
+                temp_path = imported_temp_id
+            else:
+                if not allowed_file(audio_file.filename):
+                    if ajax:
+                        return jsonify({'error': "Неверный формат файла. Поддерживается только MP3."}), 400
 
-            file_size = os.path.getsize(temp_path)
-            if file_size < MIN_SIZE_BYTES:
-                os.remove(temp_path)
-                return render_template('index.html',
-                                       directories=os.listdir(config['public_audio_path']),
-                                       courtrooms=get_available_courtrooms(),
-                                       title='Архивация аудиопротоколов',
-                                       error="Файл слишком короткий или пустой.")
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+                temp_path = tmp.name
+                tmp.close()
+                audio_file.save(temp_path)
+                file_size = os.path.getsize(temp_path)
+                if file_size < MIN_SIZE_BYTES:
+                    os.remove(temp_path)
+                    if ajax:
+                        return jsonify({'error': "Файл слишком короткий или пустой."}), 400
         except Exception:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
-            return render_template('index.html',
-                                   directories=os.listdir(config['public_audio_path']),
-                                   courtrooms=get_available_courtrooms(),
-                                   title='Архивация аудиопротоколов',
-                                   error="Ошибка при обработке файла.")
+            if ajax:
+                return jsonify({'error': "Ошибка при обработке файла"}), 400
 
         try:
             timestamp = datetime.strptime(f"{audio_date} {audio_time}", "%Y-%m-%d %H:%M")
         except ValueError:
             os.remove(temp_path)
-            return render_template('index.html', directories=os.listdir(config['public_audio_path']),
-                                   courtrooms=get_available_courtrooms(),
-                                   title='Архивация аудиопротоколов',
-                                   error="Неверный формат даты или времени.")
+            if ajax:
+                return jsonify({'error': "Неверный формат даты или времени."}), 400
 
         base_path = config['closed_audio_path'] if closed_session else config['public_audio_path']
         user_folder_path = os.path.join(base_path, user_folder)
@@ -89,10 +91,8 @@ def home_redirector():
 
         if os.path.exists(file_path):
             os.remove(temp_path)
-            return render_template('index.html', directories=os.listdir(config['public_audio_path']),
-                                   courtrooms=get_available_courtrooms(),
-                                   title='Архивация аудиопротоколов',
-                                   error="Аудиозапись в указанные время и дату уже существует по этому делу. Укажите другие данные.")
+            if ajax:
+                return jsonify({'error': "Аудиозапись в указанные время и дату уже существует по этому делу. Укажите другие данные."}), 400
 
         shutil.move(temp_path, file_path)
 
@@ -111,10 +111,8 @@ def home_redirector():
             session.commit()
             session.close()
 
-        return render_template('index.html', directories=os.listdir(config['public_audio_path']),
-                               courtrooms=get_available_courtrooms(),
-                               title='Архивация аудиопротоколов',
-                               success=os.path.abspath(file_path))
+        if ajax:
+            return jsonify({'success': os.path.abspath(file_path)})
 
     return render_template('index.html', directories=os.listdir(config['public_audio_path']),
                            courtrooms=get_available_courtrooms(),
@@ -127,3 +125,8 @@ def archive_viewer():
                            directories=os.listdir(config['public_audio_path']),
                            courtrooms=get_available_courtrooms(),
                            title="Архив аудиопротоколов")
+
+
+@views.route('/upload_audio', methods=['POST'])
+def upload_audio_ajax():
+    return home_redirector(ajax=True)

@@ -1,4 +1,4 @@
-from PySide2.QtCore import Signal
+from PySide2.QtCore import Signal, Qt, QTranslator, QLocale, QLibraryInfo, QCoreApplication
 from PySide2.QtGui import QIcon
 import time
 from backend import create_app, config
@@ -10,7 +10,7 @@ from string import Template
 import os
 import threading
 import psutil
-from PySide2.QtWidgets import (
+from PySide2.QtWidgets import (QStyleFactory,
     QMainWindow, QApplication, QPushButton, QLabel, QVBoxLayout, QWidget, QLineEdit, QFormLayout, QMessageBox,
     QComboBox, QSystemTrayIcon, QMenu, QAction, QCheckBox, QListWidget, QHBoxLayout, QTableWidget, QTableWidgetItem, QFileDialog)
 import sys
@@ -74,10 +74,11 @@ def generate_nginx_config(config):
 def start_nginx():
     global nginx_process
     try:
-        nginx_process = subprocess.Popen(
-            ['nginx-1.27.1/nginx.exe', '-c', os.path.abspath('nginx_dynamic.conf')],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        with open('logs/nginx_stderr.log', 'wb') as errlog:
+            nginx_process = subprocess.Popen(
+                ['nginx-1.27.1/nginx.exe', '-c', os.path.abspath('nginx_dynamic.conf')],
+                stdout=subprocess.DEVNULL, stderr=errlog
+            )
         time.sleep(2)
         if nginx_process.poll() is not None:
             stdout, stderr = nginx_process.communicate()
@@ -163,7 +164,7 @@ class MainWindow(QMainWindow):
         self.monitor_thread = None
         self.stop_threads_event = threading.Event()
         self.setWindowTitle("Сервер CWAA")
-        self.setFixedSize(420, 370)
+        self.setMinimumSize(500, 400)
         self.setWindowIcon(QIcon('cwaa-icon.ico'))
 
         # Статус сервера и кнопки
@@ -262,6 +263,7 @@ class MainWindow(QMainWindow):
 
     def start_server(self):
         try:
+            self.save_config()
             if not self.backup_window:
                 self.backup_window = BackupSettingsWindow()
             start_service()  # Запуск сервиса, включая Flask
@@ -404,7 +406,7 @@ class CourtroomManagerWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Управление залами")
-        self.setFixedSize(400, 500)
+        self.setMinimumSize(400, 500)
 
         layout = QVBoxLayout()
         import_label = QLabel("🔁 Залы для сохранения аудиозаписей:")
@@ -416,6 +418,7 @@ class CourtroomManagerWindow(QWidget):
 
         cr_btns = QHBoxLayout()
         self.input_field = QLineEdit()
+        layout.addWidget(self.input_field)
         self.add_button = QPushButton("➕ Добавить")
         self.add_button.clicked.connect(self.add_courtroom)
         self.delete_button = QPushButton("🗑 Удалить выбранное")
@@ -522,6 +525,14 @@ class CourtroomManagerWindow(QWidget):
 
 
 if __name__ == '__main__':
+    QCoreApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+    QCoreApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     app = QApplication(sys.argv)
+    translator = QTranslator()
+    locale = QLocale.system().name()  # Получение системной локали
+    path = QLibraryInfo.location(QLibraryInfo.TranslationsPath)  # Путь к переводам Qt
+    translator.load("qtbase_" + locale, path)
+    app.installTranslator(translator)
+    app.setStyle(QStyleFactory.create("Fusion"))
     window = MainWindow()
     sys.exit(app.exec_())

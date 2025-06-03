@@ -12,7 +12,10 @@ RECOGNIZE_FOLDER = config['recognize_text_from_audio_path']
 MAX_PENDING_FILES = 20
 SLEEP_SECONDS = 20
 
+
 def run_orchestrator_loop():
+    if not RECOGNIZE_FOLDER or not os.path.exists(RECOGNIZE_FOLDER):
+        return
     while True:
         try:
             session = Session()

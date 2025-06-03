@@ -10,8 +10,12 @@ from backend.db import engine, Session
 from backend.models import AudioRecord
 import re
 from datetime import datetime
+import tempfile
 
 COURTROOMS_FILE = 'courtrooms.txt'
+TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
+os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
+
 
 def get_available_courtrooms():
     if not os.path.exists(COURTROOMS_FILE):
@@ -19,10 +23,12 @@ def get_available_courtrooms():
     with open(COURTROOMS_FILE, 'r', encoding='utf-8') as f:
         return [line.strip() for line in f if line.strip()]
 
+
 def get_server_ip():
     hostname = socket.gethostname()
     ip_address = socket.gethostbyname(hostname)
     return ip_address
+
 
 def get_all_public_ips():
     public_ips = []
