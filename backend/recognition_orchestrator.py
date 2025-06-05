@@ -73,6 +73,10 @@ def run_orchestrator_loop():
                     try:
                         recognize_mp3_name = f"{record.id}___{os.path.basename(record.file_path)}"
                         recognize_mp3_path = os.path.join(RECOGNIZE_FOLDER, recognize_mp3_name)
+                        recognize_docx_path = recognize_mp3_path.replace('.mp3', '.docx')
+                        if os.path.exists(recognize_docx_path):
+                            os.remove(recognize_docx_path)
+                            print(f"Удалили побочный {recognize_docx_path}")
                         if os.path.exists(recognize_mp3_path):
                             os.remove(recognize_mp3_path)
                             print(f"Удалили из очереди {recognize_mp3_path}")

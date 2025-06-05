@@ -2,7 +2,7 @@ from PySide2.QtCore import Signal, Qt, QTranslator, QLocale, QLibraryInfo, QCore
 from PySide2.QtGui import QIcon
 import time
 from backend import create_app, config
-from backend.utils import save_config, get_all_public_ips
+from backend.utils import save_config, get_all_public_ips, cleanup_old_mp3_files
 from backend.recognition_orchestrator import run_orchestrator_loop
 from waitress import serve
 import subprocess
@@ -17,11 +17,10 @@ import sys
 from backend.backup_service import BackupSettingsWindow
 
 
-# .venv/Scripts/pyinstaller.exe --windowed --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx-1.27.1;nginx-1.27.1" "CWAA Server.py"
-
-# if getattr(sys, 'frozen', False):
-#     sys.stdout = open('console_output.log', 'a', buffering=1)
-#     sys.stderr = open('console_errors.log', 'a', buffering=1)
+# .venv/Scripts/pyinstaller.exe --windowed --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx-1.27.1;nginx-1.27.1" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffmpeg.exe;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffprobe.exe;." "CWAA Server.py"
+if getattr(sys, 'frozen', False):
+    sys.stdout = open('console_output.log', 'a', buffering=1)
+    sys.stderr = open('console_errors.log', 'a', buffering=1)
 
 os.makedirs('logs', exist_ok=True)
 os.makedirs('temp', exist_ok=True)
@@ -272,6 +271,8 @@ class MainWindow(QMainWindow):
             self.monitor_thread = threading.Thread(target=self.monitor_services, args=(self.nginx_error_signal, self.stop_threads_event),
                                                    daemon=True)
             self.monitor_thread.start()
+            # Пример запуска в отдельном потоке
+            threading.Thread(target=cleanup_old_mp3_files, daemon=True).start()
             # Ждем, пока flask_app инициализируется
             retries = 5
             while flask_app is None and retries > 0:
@@ -412,8 +413,6 @@ class CourtroomManagerWindow(QWidget):
         import_label = QLabel("🔁 Залы для сохранения аудиозаписей:")
         layout.addWidget(import_label)
         self.list_widget = QListWidget()
-        self.load_courtrooms()
-        self.load_import_sources()
         layout.addWidget(self.list_widget)
 
         cr_btns = QHBoxLayout()
@@ -458,6 +457,8 @@ class CourtroomManagerWindow(QWidget):
         self.save_button.clicked.connect(self.save_courtrooms)
         layout.addWidget(self.save_button)
         self.setLayout(layout)
+        self.load_courtrooms()
+        self.load_import_sources()
 
     def load_courtrooms(self):
         from backend.utils import get_available_courtrooms

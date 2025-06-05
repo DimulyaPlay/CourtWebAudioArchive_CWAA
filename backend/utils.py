@@ -11,11 +11,29 @@ from backend.models import AudioRecord
 import re
 from datetime import datetime
 import tempfile
+import time
 
 COURTROOMS_FILE = 'courtrooms.txt'
 TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
 os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
+FILE_LIFETIME_SECONDS = 3600  # 1 час
+CHECK_INTERVAL_SECONDS = 300  # каждые 5 минут
 
+
+def cleanup_old_mp3_files():
+    while True:
+        try:
+            now = time.time()
+            for filename in os.listdir(TEMP_MP3_FOLDER):
+                file_path = os.path.join(TEMP_MP3_FOLDER, filename)
+                if os.path.isfile(file_path) and filename.lower().endswith(".mp3"):
+                    file_age = now - os.path.getmtime(file_path)
+                    if file_age > FILE_LIFETIME_SECONDS:
+                        os.remove(file_path)
+                        print(f"[CLEANUP] Deleted: {file_path}")
+        except Exception as e:
+            print(f"[CLEANUP ERROR] {e}")
+        time.sleep(CHECK_INTERVAL_SECONDS)
 
 def get_available_courtrooms():
     if not os.path.exists(COURTROOMS_FILE):

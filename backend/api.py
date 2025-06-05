@@ -12,6 +12,9 @@ from datetime import timedelta, datetime
 import tempfile
 import subprocess
 import re
+from threading import Semaphore
+
+FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвертации одновременно
 
 
 api = Blueprint('api', __name__)
@@ -209,66 +212,68 @@ def list_cases_in_folder():
 
 @api.route('/convert_case', methods=['POST'])
 def convert_case():
-    case_path = request.form.get('path')
-    if not case_path or not os.path.isdir(case_path):
-        return jsonify({'error': 'invalid path'}), 400
+    with FFMPEG_SEMAPHORE:
+        case_path = request.form.get('path')
+        if not case_path or not os.path.isdir(case_path):
+            return jsonify({'error': 'invalid path'}), 400
+        # Группировка по каналам
+        channel_groups = {}
+        for root, _, files in os.walk(case_path):
+            for f in files:
+                if not f.lower().endswith('.wav'):
+                    continue
+                match = re.match(r'^(\d\s\d\d)', f)
+                if match:
+                    key = match.group(1)
+                    channel_groups.setdefault(key, []).append(os.path.join(root, f))
 
-    # Группировка по каналам
-    channel_groups = {}
-    for root, _, files in os.walk(case_path):
-        for f in files:
-            if not f.lower().endswith('.wav'):
-                continue
-            match = re.match(r'^(\d\s\d\d)', f)
-            if match:
-                key = match.group(1)
-                channel_groups.setdefault(key, []).append(os.path.join(root, f))
-
-    groups = [sorted(lst) for lst in sorted(channel_groups.values()) if lst]
-    if not groups:
-        return jsonify({'error': 'no valid .wav files'}), 400
-    # Конкатенация каналов
-    intermediate_files = []
-    for idx, group in enumerate(groups):
-        cmd = ['ffmpeg', '-y']
-        for f in group:
-            cmd += ['-i', f]
-        concat_filter = ''.join([f'[{i}:0]' for i in range(len(group))])
-        concat_filter += f'concat=n={len(group)}:v=0:a=1[out]'
-        out_tmp = os.path.join(TEMP_MP3_FOLDER, f"intermediate_{idx}.wav")
-        cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'adpcm_ima_wav', out_tmp]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        groups = [sorted(lst) for lst in sorted(channel_groups.values()) if lst]
+        if not groups:
+            return jsonify({'error': 'no valid .wav files'}), 400
+        # Конкатенация каналов
+        intermediate_files = []
+        for idx, group in enumerate(groups):
+            cmd = ['ffmpeg', '-y']
+            for f in group:
+                cmd += ['-i', f]
+            concat_filter = ''.join([f'[{i}:0]' for i in range(len(group))])
+            concat_filter += f'concat=n={len(group)}:v=0:a=1[out]'
+            out_tmp = os.path.join(TEMP_MP3_FOLDER, f"intermediate_{idx}.wav")
+            cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'adpcm_ima_wav', out_tmp]
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode != 0:
+                return jsonify({'error': f'ffmpeg concat error: {result.stderr.decode()[:200]}'}), 500
+            intermediate_files.append(out_tmp)
+        # Смешивание всех каналов
+        mix_cmd = ['ffmpeg', '-y']
+        for f in intermediate_files:
+            mix_cmd += ['-i', f]
+        final_name = f"femida_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
+        final_tmp = os.path.join(TEMP_MP3_FOLDER, final_name)
+        mix_cmd += [
+            '-filter_complex', f'amix=inputs={len(intermediate_files)}:duration=longest:dropout_transition=2',
+            '-ac', '1', '-ar', '16000', '-q:a', '2', final_tmp
+        ]
+        result = subprocess.run(mix_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
-            return jsonify({'error': f'ffmpeg concat error: {result.stderr.decode()[:200]}'}), 500
-        intermediate_files.append(out_tmp)
-    # Смешивание всех каналов
-    mix_cmd = ['ffmpeg', '-y']
-    for f in intermediate_files:
-        mix_cmd += ['-i', f]
-    final_name = f"femida_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
-    final_tmp = os.path.join(TEMP_MP3_FOLDER, final_name)
-    mix_cmd += [
-        '-filter_complex', f'amix=inputs={len(intermediate_files)}:duration=longest:dropout_transition=2',
-        '-ac', '1', '-ar', '16000', '-q:a', '2', final_tmp
-    ]
-    result = subprocess.run(mix_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if result.returncode != 0:
-        return jsonify({'error': f'ffmpeg mix error: {result.stderr.decode()[:200]}'}), 500
-    # Извлекаем дату из названия кейса (например: from 18-04-2025)
-    base_name = os.path.basename(case_path)
-    dt_match = re.search(r'from\s+(\d{2})-(\d{2})-(\d{4})', base_name)
-    if dt_match:
-        dt = datetime.strptime('-'.join(dt_match.groups()), "%d-%m-%Y")
-    else:
-        dt = datetime.now()
+            return jsonify({'error': f'ffmpeg mix error: {result.stderr.decode()[:200]}'}), 500
+        # Извлекаем дату из названия кейса (например: from 18-04-2025)
+        base_name = os.path.basename(case_path)
+        dt_match = re.search(r'from\s+(\d{2})-(\d{2})-(\d{4})', base_name)
+        if dt_match:
+            dt = datetime.strptime('-'.join(dt_match.groups()), "%d-%m-%Y")
+        else:
+            dt = datetime.now()
 
-    return jsonify({
-        'temp_id': final_tmp,
-        'date': dt.strftime("%Y-%m-%d")
-    })
+        return jsonify({
+            'temp_id': final_tmp,
+            'date': dt.strftime("%Y-%m-%d")
+        })
 
 
-@api.route('/audio/<filename>')
+# Используем отдельный эндпоинт для временных файлов, чтобы не конфликтовать
+# с основным обработчиком /audio/<path:filename>
+@api.route('/temp_audio/<filename>')
 def serve_temp_audio(filename):
     path = os.path.join(TEMP_MP3_FOLDER, filename)
     if os.path.exists(path):

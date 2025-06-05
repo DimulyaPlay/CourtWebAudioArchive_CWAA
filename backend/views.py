@@ -96,6 +96,7 @@ def home_redirector(ajax=False):
 
         shutil.move(temp_path, file_path)
 
+        record_id = None
         if not bool(closed_session):
             session = Session()
             record = AudioRecord(
@@ -109,10 +110,13 @@ def home_redirector(ajax=False):
             )
             session.add(record)
             session.commit()
+            # Получение ID записи перед закрытием сессии
+            record_id = record.id
             session.close()
 
         if ajax:
-            return jsonify({'success': os.path.abspath(file_path)})
+            return jsonify({'success': os.path.abspath(file_path),
+                            'id': record_id})
 
     return render_template('index.html', directories=os.listdir(config['public_audio_path']),
                            courtrooms=get_available_courtrooms(),
