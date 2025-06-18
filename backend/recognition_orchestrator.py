@@ -12,43 +12,79 @@ RECOGNIZE_FOLDER = config['recognize_text_from_audio_path']
 MAX_PENDING_FILES = 20
 SLEEP_SECONDS = 20
 
+# Кэш для правил замены и время их последнего обновления
+_PHRASE_RULES = None
+_PHRASE_RULES_MTIME = None
 
-def load_phrase_replacement_rules():
-    rules = []
-    with open(os.path.join('assets', 'phraseReplacement.txt'), 'r', encoding='utf-8') as f:
-        for line_num, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line or '>' not in line:
-                continue
-            # удаляем лишние пробелы и точку с запятой
-            parts = line.split('>')
-            if parts[-1].endswith(';'):
-                parts[-1] = parts[-1][:-1].strip()
-            if len(parts) < 2:
-                continue
-            *wrong_forms, correct = parts
-            for wrong in wrong_forms:
-                rules.append((wrong.strip(), correct.strip(), line_num))
-    return rules
+
+def load_phrase_replacement_rules(force_reload: bool = False):
+    """Загружает правила из файла, используя кэш.
+
+    Правила перечитываются только если файл был изменён либо при
+    принудительном обновлении через ``force_reload``.
+    """
+    global _PHRASE_RULES, _PHRASE_RULES_MTIME
+
+    file_path = os.path.join('assets', 'phraseReplacement.txt')
+    try:
+        mtime = os.path.getmtime(file_path)
+    except FileNotFoundError:
+        mtime = None
+
+    if force_reload or _PHRASE_RULES is None or mtime != _PHRASE_RULES_MTIME:
+        rules = []
+        if mtime is not None:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, start=1):
+                    line = line.strip()
+                    if not line or '>' not in line:
+                        continue
+                    parts = line.split('>')
+                    if parts[-1].endswith(';'):
+                        parts[-1] = parts[-1][:-1].strip()
+                    if len(parts) < 2:
+                        continue
+                    *wrong_forms, correct = parts
+                    for wrong in wrong_forms:
+                        rules.append((wrong.strip(), correct.strip(), line_num))
+        _PHRASE_RULES = rules
+        _PHRASE_RULES_MTIME = mtime
+
+    return _PHRASE_RULES
+
+
+def get_phrase_replacement_rules():
+    """Возвращает загруженные правила замены."""
+    return _PHRASE_RULES if _PHRASE_RULES is not None else load_phrase_replacement_rules()
+
+
+# Загружаем правила при инициализации модуля
+load_phrase_replacement_rules()
 
 
 def apply_replacement_with_tags(text, rules):
-    def is_inside_tag(pos, tag_spans):
-        return any(start <= pos < end for start, end in tag_spans)
-    tag_spans = [(m.start(), m.end()) for m in re.finditer(r'<replace>.*?</replace>', text, flags=re.DOTALL)]
+    # Прячем уже существующие <replace> теги
+    placeholders = []
+    def hide_existing(match):
+        placeholders.append(match.group(0))
+        return f"<<PH_{len(placeholders)}>>"
+    text = re.sub(r'<replace>.*?</replace>', hide_existing, text, flags=re.DOTALL)
+
     for wrong, correct, rule_num in rules:
-        if ' ' in wrong:
-            pattern = r'(?<!\S)' + re.escape(wrong) + r'(?!\S)'
-        else:
-            pattern = r'\b' + re.escape(wrong) + r'\b'
-        def safe_replacer(match):
-            start = match.start()
-            if is_inside_tag(start, tag_spans):
-                return match.group(0)  # уже внутри <replace> — не трогаем
-            return f"<replace><old>{match.group(0)}</old><new>{correct}</new><rule>{rule_num}</rule></replace>"
-        text = re.sub(pattern, safe_replacer, text)
-        tag_spans = [(m.start(), m.end()) for m in re.finditer(r'<replace>.*?</replace>', text, flags=re.DOTALL)]
+        # Поддержка границ: не внутри слов
+        pattern = re.compile(r'(?<![\wа-яА-Я])(' + re.escape(wrong) + r')(?![\wа-яА-Я])', flags=re.IGNORECASE)
+
+        def replacer(match):
+            return f"<replace><old>{match.group(1)}</old><new>{correct}</new><rule>{rule_num}</rule></replace>"
+
+        text = pattern.sub(replacer, text)
+
+    # Восстанавливаем скрытые теги
+    for i, ph in enumerate(placeholders):
+        text = text.replace(f"<<PH_{i}>>", ph)
+
     return text
+
 
 
 def strip_replacement_tags(tagged_text):
@@ -100,7 +136,7 @@ def run_orchestrator_loop():
                 try:
                     with open(source_txt_path, 'r', encoding='utf-8') as f:
                         content = f.read()
-                        rules = load_phrase_replacement_rules()
+                        rules = get_phrase_replacement_rules()
                         tagged_text = apply_replacement_with_tags(content, rules)
                     with open(source_txt_path, 'w', encoding='utf-8') as f:
                         f.write(tagged_text)

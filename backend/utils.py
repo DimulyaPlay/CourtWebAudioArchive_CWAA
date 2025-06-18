@@ -222,9 +222,9 @@ def scan_and_populate_database(base_path: str, user_folder: str):
 
     session.commit()
     session.close()
-    from backend.recognition_orchestrator import load_phrase_replacement_rules, apply_replacement_with_tags, \
+    from backend.recognition_orchestrator import get_phrase_replacement_rules, apply_replacement_with_tags, \
         strip_replacement_tags
-    rules = load_phrase_replacement_rules()
+    rules = get_phrase_replacement_rules()
     for record_id, txt_path in indexed_records:
         try:
             with open(txt_path, 'r', encoding='utf-8') as f:
