@@ -79,6 +79,23 @@
     .match-active {
       outline: 2px dashed orange;
     }
+
+    .highlight-replace {
+      background-color: #fff3cd;
+      border-bottom: 1px dashed #856404;
+    }
+
+    #replacePopover {
+      max-width: 260px;
+    }
+
+    .toast-wrapper {
+      pointer-events: none;
+    }
+
+    .toast-wrapper .toast {
+      pointer-events: auto;
+    }
   </style>
 </head>
 
@@ -137,8 +154,14 @@
     <div class="right-panel">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <h4 id="selectedTitle" class="mb-0"></h4>
-        <button id="retranscribeBtn" class="btn btn-sm btn-outline-danger" style="display:none;">Распознать
-          заново</button>
+        <div class="d-flex gap-2" role="group">
+          <button id="downloadTextBtn" class="btn btn-sm btn-outline-primary" style="display:none;">Скачать
+            текст</button>
+          <button id="retranscribeBtn" class="btn btn-sm btn-outline-danger" style="display:none;">Распознать
+            заново</button>
+          <button id="reapplyRulesBtn" class="btn btn-sm btn-outline-success" style="display:none;">Применить новые
+            правила автозамены</button>
+        </div>
       </div>
       <div class="mb-2 d-flex align-items-center gap-2">
         <input type="text" id="localSearch" class="form-control form-control-sm" placeholder="Поиск в тексте..."
@@ -156,7 +179,7 @@
 
   <!-- Глобальный плеер -->
   <div class="audio-player-bar">
-    <audio id="audioPlayer" style="display: none">
+    <audio id="audioPlayer" hidden>
       <source id="audioSource" src="" type="audio/mpeg">
     </audio>
     <div class="d-flex align-items-center gap-3">
@@ -201,11 +224,78 @@
       </div>
     </div>
   </div>
-  <div class="position-fixed bottom-0 start-0 p-3" style="z-index: 9999">
+
+  <div class="modal fade" id="createRuleModal" tabindex="-1" aria-labelledby="createRuleModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="createRuleModalLabel">Новое правило автозамены</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-2">
+            <label class="form-label">Выделенная фраза (исходная):</label>
+            <input type="text" class="form-control" id="modalOriginalText" readonly>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Заменить на:</label>
+            <input type="text" class="form-control" id="modalReplacementText">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="confirmAddRuleBtn">Сохранить правило</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="replacePopover" class="popover bs-popover-top" role="tooltip"
+    style="display: none; position: absolute; z-index: 2000;">
+    <h4 class="popover-header">Заменено по правилу</h4>
+    <div class="popover-body">
+      <div class="original-text small text-muted"></div>
+      <button class="btn btn-sm btn-outline-danger mt-3 btn-undo-replacement">Отменить для этого текста</button>
+    </div>
+  </div>
+
+  <div id="selectionPopover" class="popover bs-popover-top" role="tooltip"
+    style="display: none; position: absolute; z-index: 2000;">
+    <h4 class="popover-header">Добавление правила</h4>
+    <div class="popover-body text-center">
+      <button class="btn btn-sm btn-primary" id="createRuleBtn">Создать правило для выделенного текста</button>
+    </div>
+  </div>
+
+  <div class="toast-wrapper position-fixed bottom-0 start-0 p-3" style="z-index: 9999">
     <div id="copyToastContainer"></div>
   </div>
-  
+
+  <div class="modal fade" id="onboardingModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+      <div class="modal-content border-info">
+        <div class="modal-header bg-info text-white">
+          <h5 class="modal-title">Обучение</h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body small">
+          <p>👆 Вы можете <strong>выделить текст</strong>, чтобы предложить замену — это создаст <u>новое правило</u>
+            автозамены при распознавании текста.</p>
+          <p>🔁 Заменённые фразы <span style="border-bottom:1px dashed #856404;">подчёркнуты</span> — наведите на них,
+            чтобы увидеть исходный текст и отменить замену для текущего текста.</p>
+          <p>📁 Эти правила сохраняются и применяются ко всем будущим текстам.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-info btn-sm" data-bs-dismiss="modal">Понятно</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
+    $.ajaxSetup({
+      headers: { 'Content-Type': 'application/json' }
+    });
+
     const transcriptBox = $('#transcriptBox');
     const audio = document.getElementById('audioPlayer');
     let matchIndices = [];
@@ -277,11 +367,18 @@
 
 
     $('#recordList').on('click', '.list-group-item', function (e) {
+      if (!localStorage.getItem('wasOnboardingShown')) {
+        setTimeout(() => $('#onboardingModal').modal('show'), 300);
+        setTimeout(() => $('#onboardingModal').modal('hide'), 60000);
+        localStorage.setItem('wasOnboardingShown', 'true');
+      }
       if ($(e.target).is('input')) return;
       $('.list-group-item').removeClass('record-active');
       $(this).addClass('record-active');
       const id = $(this).data('id');
       $('#retranscribeBtn').show().data('id', id);
+      $('#downloadTextBtn').show().data('id', id);
+      $('#reapplyRulesBtn').show().data('id', id);
       $.getJSON('/api/record/' + id, function (data) {
         const textQuery = $('[name="text_query"]').val().trim().toLowerCase();
         matchIndices = [];
@@ -319,7 +416,7 @@
             .addClass('phrase-item')
             .attr('data-start', p.start)
             .attr('data-end', p.end)
-            .html(text);
+            .html(renderPhraseText(text));
           transcriptBox.append(el);
 
         });
@@ -340,6 +437,7 @@
     });
 
     setInterval(() => {
+      if (audio.paused) return;
       const current = audio.currentTime;
       const phrases = $('.phrase-item');
       let newActive = null;
@@ -355,18 +453,185 @@
       if (newActive && newActive !== lastActive && !isUserScrolling) {
         lastActive = newActive;
         const el = $(newActive);
-        $('html, body').stop(); // отмена предыдущей анимации, если была
+        $('html, body').stop();
         transcriptBox.stop().animate({
           scrollTop: el.position().top + transcriptBox.scrollTop() - transcriptBox.height() / 2 + el.height() / 2
         }, 500);
       }
     }, 400);
 
-    transcriptBox.on('click', '.phrase-item', function () {
+    transcriptBox.on('mouseenter', '.highlight-replace', function (e) {
+      const el = $(this);
+      const original = el.data('old');
+      const rule = el.data('rule');
+      const popover = $('#replacePopover');
+
+      popover.find('.original-text').html(`Исходная фраза: "<strong>${original}</strong>"<br>Правило: ${rule}`);
+      popover.data('target', el);
+
+      const offset = el.offset();
+      const elHeight = el.outerHeight();
+      const popoverHeight = popover.outerHeight();
+      const popoverWidth = popover.outerWidth();
+      const scrollTop = $(window).scrollTop();
+      const windowHeight = $(window).height();
+
+      let top, left;
+      const showBelow = (offset.top - scrollTop) < popoverHeight + 20;
+
+      if (showBelow) {
+        top = offset.top + elHeight + 6;
+        popover.removeClass('bs-popover-top').addClass('bs-popover-bottom');
+      } else {
+        top = offset.top - popoverHeight - 6;
+        popover.removeClass('bs-popover-bottom').addClass('bs-popover-top');
+      }
+      left = offset.left - popoverWidth / 2 + el.outerWidth() / 2;
+      popover.css({
+        top: top,
+        left: Math.max(left, 10),
+        display: 'block'
+      });
+    });
+
+    transcriptBox.on('mouseleave', '.highlight-replace', function (e) {
+      setTimeout(() => {
+        if (!$('#replacePopover').is(':hover')) {
+          $('#replacePopover').hide();
+        }
+      }, 150);
+    });
+
+    transcriptBox.on('mouseup', function (e) {
+      const selectedText = window.getSelection().toString().trim();
+      if (!selectedText) return $('#selectionPopover').hide();
+
+      const range = window.getSelection().getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      const popover = $('#selectionPopover');
+
+      const popoverHeight = popover.outerHeight();
+      const popoverWidth = popover.outerWidth();
+      const scrollTop = $(window).scrollTop();
+      const showBelow = (rect.top - scrollTop) < popoverHeight + 20;
+
+      let top = showBelow
+        ? rect.bottom + window.scrollY + 6
+        : rect.top + window.scrollY - popoverHeight - 6;
+
+      let left = rect.left + window.scrollX + rect.width / 2 - popoverWidth / 2;
+
+      popover.removeClass('bs-popover-top bs-popover-bottom');
+      popover.addClass(showBelow ? 'bs-popover-bottom' : 'bs-popover-top');
+
+      popover.css({
+        top: top,
+        left: Math.max(left, 10),
+        display: 'block'
+      }).data('selectedText', selectedText);
+    });
+
+
+    $(document).on('click', function (e) {
+      if (!$(e.target).closest('#selectionPopover').length && !$(e.target).closest('.phrase-item').length) {
+        $('#selectionPopover').hide();
+      }
+    });
+
+    $('#createRuleBtn').on('click', function () {
+      const selected = $('#selectionPopover').data('selectedText');
+      $('#modalOriginalText').val(selected);
+      $('#modalReplacementText').val('');
+      $('#createRuleModal').modal('show');
+      $('#selectionPopover').hide();
+    });
+
+    $('#confirmAddRuleBtn').on('click', function () {
+      const from = $('#modalOriginalText').val().trim();
+      const to = $('#modalReplacementText').val().trim();
+      const recordId = $('.record-active').data('id'); // получаем ID активной записи
+      if (!recordId) {
+        showToast('Невозможно определить ID записи', 'Ошибка');
+        return;
+      }
+      if (!to) {
+        alert('Введите замену');
+        return;
+      }
+
+      $.post('/api/add_replacement_rule', JSON.stringify({
+        from: from,
+        to: to,
+        record_id: recordId
+      }), function (data) {
+        $('#createRuleModal').modal('hide');
+        showToast(`Создано правило: "${from}" → "${to}" (правило №${data.rule_index})`);
+        const scrollPos = $('#transcriptBox').scrollTop();
+        // Перезапрос текущего протокола
+        $('#recordList .record-active').trigger('click');
+        setTimeout(() => {
+          $('#transcriptBox').scrollTop(scrollPos);
+        }, 200);
+      }, 'json').fail(function (xhr) {
+        const msg = xhr.responseJSON?.error || 'Ошибка при добавлении правила';
+        showToast(msg, 'Ошибка');
+      });
+
+    });
+
+    $('#reapplyRulesBtn').on('click', function () {
+      const id = $(this).data('id');
+      if (!id) return showToast('ID записи не определён', 'Ошибка');
+
+      $.post('/api/reapply_rules', JSON.stringify({ record_id: id }), function () {
+        showToast('Правила повторно применены к тексту');
+        $('#recordList .record-active').trigger('click'); // перерисовать
+      }).fail(function () {
+        showToast('Ошибка при повторном применении правил', 'Ошибка');
+      });
+    });
+
+    transcriptBox.on('click', '.phrase-item', function (e) {
+      // Предотвращаем конфликт с выделением текста
+      if (window.getSelection().toString().length > 0) return;
+
       const start = parseFloat(this.dataset.start);
-      audio.currentTime = start;
-      audio.play();
-      $('#playPause').text('⏸');
+      if (!isNaN(start)) {
+        audio.currentTime = start;
+        audio.play();
+        $('#playPause').text('⏸');
+      }
+    });
+
+    $('#replacePopover').on('mouseleave', function () {
+      $(this).hide();
+    });
+
+    $('#replacePopover').on('click', '.btn-undo-replacement', function () {
+      const el = $('#replacePopover').data('target');
+      if (!el || !el.length) return;
+
+      const originalText = el.data('old');
+      const rule = el.data('rule');
+      const currentId = $('.record-active').data('id');
+
+      if (!currentId) {
+        showToast('Невозможно определить ID записи', 'Ошибка');
+        return;
+      }
+
+      $.post('/api/undo_replacement', JSON.stringify({
+        record_id: currentId,
+        original: originalText,
+        rule: rule
+      }), function (data) {
+        el.replaceWith(originalText);
+        $('#replacePopover').hide();
+        showToast('Изменения в документ внесены', 'Успех');
+      }, 'json').fail(function (xhr) {
+        const msg = xhr.responseJSON?.error || 'Не удалось отменить замену';
+        showToast(msg, 'Ошибка');
+      });
     });
 
     $('#downloadSelected').on('click', function () {
@@ -375,6 +640,12 @@
       }).get().join('&');
       if (!selectedIds) return alert('Выберите хотя бы одну запись для скачивания');
       window.location.href = '/api/download?' + selectedIds;
+    });
+
+    $('#downloadTextBtn').on('click', function () {
+      const id = $(this).data('id');
+      const timestamp = Date.now();
+      window.location.href = `/api/export_text/${id}?_=${timestamp}`;
     });
 
     function scrollToMatch(index) {
@@ -388,6 +659,13 @@
         el.addClass('match-active');
         $('#matchCounter').text(`${index + 1} из ${matchIndices.length}`);
       }
+    }
+
+    function renderPhraseText(text) {
+      return text.replace(/<replace><old>(.*?)<\/old><new>(.*?)<\/new><rule>(\d+)<\/rule><\/replace>/g,
+        (_, oldText, newText, ruleNum) =>
+          `<span class="highlight-replace" data-old="${oldText}" data-rule="${ruleNum}">${newText}</span>`);
+
     }
 
     $('#retranscribeBtn').on('click', function () {
@@ -511,9 +789,9 @@
       return `${min}:${sec < 10 ? '0' : ''}${sec}`;
     }
     function updateQueueCounter() {
-    $.getJSON('/api/get_vr_queue_len', function (data) {
-    $('#queueCounter').text(`Протоколов в очереди: ${data.records_to_vr}`);
-    });
+      $.getJSON('/api/get_vr_queue_len', function (data) {
+        $('#queueCounter').text(`Протоколов в очереди: ${data.records_to_vr}`);
+      });
     }
     updateQueueCounter();
   </script>

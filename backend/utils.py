@@ -126,10 +126,14 @@ def is_file_fully_copied(file_path, check_interval=2, retries=5):
 
 def index_record_text(audio_id: int, content: str):
     with engine.begin() as conn:
-        print(f"[FTS] Индексация: ID={audio_id}, размер текста={len(content)}")
+        print(f"[FTS] Переиндексация ID={audio_id}, размер текста={len(content)}")
+        conn.exec_driver_sql(
+            "DELETE FROM record_texts WHERE audio_id = ?",
+            (audio_id,)
+        )
         conn.exec_driver_sql(
             "INSERT INTO record_texts (audio_id, content) VALUES (?, ?)",
-            parameters=[(audio_id, content)]
+            (audio_id, content)
         )
 
 
@@ -218,14 +222,17 @@ def scan_and_populate_database(base_path: str, user_folder: str):
 
     session.commit()
     session.close()
-
-    # Вне ORM-сессии: индексируем текст, уже зная ID
+    from backend.recognition_orchestrator import load_phrase_replacement_rules, apply_replacement_with_tags, \
+        strip_replacement_tags
+    rules = load_phrase_replacement_rules()
     for record_id, txt_path in indexed_records:
         try:
             with open(txt_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            index_record_text(record_id, content)
+            tagged_text = apply_replacement_with_tags(content, rules)
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write(tagged_text)
+            index_record_text(record_id, strip_replacement_tags(tagged_text))
         except Exception as e:
             print(f"⚠ Ошибка при обработке текста {txt_path}: {e}")
-
     return new_records

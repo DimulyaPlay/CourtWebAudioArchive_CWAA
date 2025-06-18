@@ -1,6 +1,17 @@
-from flask import request, jsonify, Blueprint, send_from_directory, send_file
+from flask import request, jsonify, Blueprint, send_from_directory, send_file, after_this_request
 import os
-from backend.utils import get_file_hash, compare_files, parse_transcript_file, TEMP_MP3_FOLDER
+from backend.utils import (
+    get_file_hash,
+    compare_files,
+    parse_transcript_file,
+    TEMP_MP3_FOLDER,
+    index_record_text
+)
+from backend.recognition_orchestrator import (
+    load_phrase_replacement_rules,
+    apply_replacement_with_tags,
+    strip_replacement_tags
+)
 from . import config
 from backend.db import Session, engine
 from backend.models import AudioRecord
@@ -13,6 +24,7 @@ import tempfile
 import subprocess
 import re
 from threading import Semaphore
+import uuid
 
 FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвертации одновременно
 
@@ -279,3 +291,136 @@ def serve_temp_audio(filename):
     if os.path.exists(path):
         return send_file(path, mimetype='audio/mpeg')
     return "Файл не найден", 404
+
+
+@api.route('/export_text/<int:record_id>')
+def export_text(record_id):
+    def strip_replace_tags(text):
+        """Заменяет <replace>...</replace> на содержимое <new>...</new>"""
+        return re.sub(
+            r'<replace><old>.*?</old><new>(.*?)</new><rule>\d+</rule></replace>',
+            r'\1',
+            text,
+            flags=re.DOTALL
+        )
+    def phrases_to_rtf(phrases):
+        lines = [
+            strip_replace_tags(p['text']).replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
+            for p in phrases
+        ]
+        rtf_body = '\\par\n'.join(lines)
+        return (
+            r'{\rtf1\ansi\ansicpg1251\deff0'
+            r'{\fonttbl{\f0 Times New Roman;}}'
+            r'\deflang1049'
+            r'{\f0\fs24\n' + rtf_body + '\n}}'
+        )
+    session = Session()
+    record = session.query(AudioRecord).get(record_id)
+    session.close()
+    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+        return "Протокол не найден или отсутствует текст", 404
+    phrases = parse_transcript_file(record.recognized_text_path)
+    rtf_text = phrases_to_rtf(phrases)
+    filename = f"transcript_{uuid.uuid4().hex}.rtf"
+    temp_path = os.path.join(TEMP_MP3_FOLDER, filename)
+    with open(temp_path, 'w', encoding='cp1251') as f:
+        f.write(rtf_text)
+    return send_file(temp_path, as_attachment=True,
+                     download_name=f"{record.case_number}_{record.audio_date.strftime('%Y-%m-%d_%H-%M')}.rtf")
+
+
+@api.route('/add_replacement_rule', methods=['POST'])
+def add_replacement_rule():
+    from_text = request.json.get('from')
+    to_text = request.json.get('to')
+    record_id = request.json.get('record_id')
+    if not from_text or not to_text or not record_id:
+        return jsonify({'error': 'Неверные данные'}), 400
+    path = os.path.join('assets', 'phraseReplacement.txt')
+    rule_index = None
+    with open(path, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    for idx, line in enumerate(lines):
+        if '>' in line and line.strip().endswith(';'):
+            parts = line.strip()[:-1].split('>')
+            *wrongs, correct = [p.strip() for p in parts]
+            if correct == to_text:
+                if from_text not in wrongs:
+                    wrongs.append(from_text)
+                    lines[idx] = '>'.join(wrongs + [correct]) + ';\n'
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.writelines(lines)
+                rule_index = idx + 1
+                break
+    if rule_index is None:
+        lines.append(f"{from_text}>{to_text};\n")
+        rule_index = len(lines)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+    session = Session()
+    record = session.query(AudioRecord).get(record_id)
+    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+        session.close()
+        return jsonify({'error': 'Запись не найдена'}), 404
+    with open(record.recognized_text_path, 'r', encoding='utf-8') as f:
+        old_text = f.read()
+    rules = load_phrase_replacement_rules()
+    new_tagged = apply_replacement_with_tags(strip_replacement_tags(old_text), rules)
+    with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
+        f.write(new_tagged)
+    index_record_text(record.id, strip_replacement_tags(new_tagged))
+    session.close()
+    return jsonify({'rule_index': rule_index})
+
+
+
+@api.route('/undo_replacement', methods=['POST'])
+def undo_replacement():
+    record_id = request.json.get('record_id')
+    old_text = request.json.get('original')
+    rule_num = request.json.get('rule')
+    if not record_id or not old_text or not rule_num:
+        return jsonify({'error': 'Недостаточно данных'}), 400
+    session = Session()
+    record = session.query(AudioRecord).get(record_id)
+    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+        session.close()
+        return jsonify({'error': 'Файл не найден'}), 404
+    path = record.recognized_text_path
+    with open(path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    pattern = (
+        r'<replace><old>' + re.escape(old_text) +
+        r'</old><new>.*?</new><rule>' + re.escape(str(rule_num)) + r'</rule></replace>'
+    )
+    new_content, count = re.subn(pattern, old_text, content)
+    if count == 0:
+        session.close()
+        return jsonify({'error': 'Совпадение не найдено'}), 404
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    index_record_text(record.id, strip_replacement_tags(new_content))
+    session.close()
+    return jsonify({'status': 'ok'})
+
+
+@api.route('/reapply_rules', methods=['POST'])
+def reapply_rules():
+    data = request.get_json()
+    record_id = data.get('record_id')
+    session = Session()
+    record = session.query(AudioRecord).get(record_id)
+    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+        session.close()
+        return jsonify({'error': 'Запись не найдена'}), 404
+    with open(record.recognized_text_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    base_text = strip_replacement_tags(content)
+    rules = load_phrase_replacement_rules()
+    new_text = apply_replacement_with_tags(base_text, rules)
+    with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
+        f.write(new_text)
+    index_record_text(record.id, strip_replacement_tags(new_text))
+    session.close()
+    return jsonify({'status': 'ok'})
