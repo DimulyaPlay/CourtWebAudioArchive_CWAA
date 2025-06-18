@@ -366,7 +366,7 @@ def add_replacement_rule():
         return jsonify({'error': 'Запись не найдена'}), 404
     with open(record.recognized_text_path, 'r', encoding='utf-8') as f:
         old_text = f.read()
-    rules = get_phrase_replacement_rules()
+    rules = load_phrase_replacement_rules(force_reload=True)
     new_tagged = apply_replacement_with_tags(strip_replacement_tags(old_text), rules)
     with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
         f.write(new_tagged)
@@ -418,7 +418,7 @@ def reapply_rules():
     with open(record.recognized_text_path, 'r', encoding='utf-8') as f:
         content = f.read()
     base_text = strip_replacement_tags(content)
-    rules = get_phrase_replacement_rules()
+    rules = load_phrase_replacement_rules(force_reload=True)
     new_text = apply_replacement_with_tags(base_text, rules)
     with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
         f.write(new_text)
