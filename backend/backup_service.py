@@ -13,7 +13,7 @@ import threading
 import schedule
 import time as time_module
 
-BACKUP_CONFIG_PATH = '../backup_config.txt'
+BACKUP_CONFIG_PATH = './backup_config.txt'
 
 class BackupSettingsWindow(QWidget):
     def __init__(self):

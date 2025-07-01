@@ -144,36 +144,45 @@ def parse_transcript_file(path):
     """
     entries = []
     with open(path, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-
-    buffer = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        buffer.append(line)
+        lines = [line.strip() for line in f if line.strip()]
 
     i = 0
-    while i < len(buffer):
-        line = buffer[i]
+    while i < len(lines):
+        line = lines[i]
 
-        # .srt формат: "00:00:01,000 --> 00:00:03,000"
-        srt_match = re.match(r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2}),(\d{3})', line)
-        if srt_match and i + 1 < len(buffer):
+        # .srt формат: 00:00:01,000 --> 00:00:03,000
+        srt_match = re.match(
+            r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2}),(\d{3})', line)
+        if srt_match and i + 1 < len(lines):
             start = int(srt_match[1]) * 3600 + int(srt_match[2]) * 60 + int(srt_match[3]) + int(srt_match[4]) / 1000
             end = int(srt_match[5]) * 3600 + int(srt_match[6]) * 60 + int(srt_match[7]) + int(srt_match[8]) / 1000
-            text = buffer[i + 1]
+            text = lines[i + 1]
             entries.append({'start': start, 'end': end, 'text': text})
             i += 3
             continue
 
-        # Faster-whisper формат: "[00:00.000 --> 00:05.060] Текст..."
-        fw_match = re.match(r'\[(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2})\.(\d{3})\]\s+(.*)', line)
-        if fw_match:
-            start = int(fw_match[1]) * 60 + int(fw_match[2]) + int(fw_match[3]) / 1000
-            end = int(fw_match[4]) * 60 + int(fw_match[5]) + int(fw_match[6]) / 1000
-            text = fw_match[7].strip()
+        # Faster-whisper формат с часами: [01:00:01.840 --> 01:00:05.740]
+        fw_hms_match = re.match(
+            r'\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]\s+(.*)', line)
+        if fw_hms_match:
+            start = int(fw_hms_match[1]) * 3600 + int(fw_hms_match[2]) * 60 + int(fw_hms_match[3]) + int(fw_hms_match[4]) / 1000
+            end = int(fw_hms_match[5]) * 3600 + int(fw_hms_match[6]) * 60 + int(fw_hms_match[7]) + int(fw_hms_match[8]) / 1000
+            text = fw_hms_match[9].strip()
             entries.append({'start': start, 'end': end, 'text': text})
+            i += 1
+            continue
+
+        # Faster-whisper формат без часов (старый): [59:53.680 --> 59:54.480]
+        fw_ms_match = re.match(
+            r'\[(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2})\.(\d{3})\]\s+(.*)', line)
+        if fw_ms_match:
+            start = int(fw_ms_match[1]) * 60 + int(fw_ms_match[2]) + int(fw_ms_match[3]) / 1000
+            end = int(fw_ms_match[4]) * 60 + int(fw_ms_match[5]) + int(fw_ms_match[6]) / 1000
+            text = fw_ms_match[7].strip()
+            entries.append({'start': start, 'end': end, 'text': text})
+            i += 1
+            continue
+
         i += 1
 
     return entries
