@@ -7,6 +7,7 @@
   <script src="/assets/frameworks/jquery.min.js"></script>
   <script src="/assets/frameworks/bootstrap.bundle.min.js"></script>
   <link href="/assets/frameworks/bootstrap.min.css" rel="stylesheet">
+  <link href="/assets/style.css" rel="stylesheet">
   <style>
     html,
     body {
@@ -129,11 +130,12 @@
           {% endfor %}
         </select>
         <input type="text" class="form-control mb-2" name="comment" placeholder="Комментарий">
-
+        <div style="display:none">
         <input type="text" class="form-control mb-2" name="text_query" placeholder="Поиск по тексту">
         <div class="form-check">
           <input class="form-check-input" type="checkbox" name="use_fts" id="use_fts">
           <label class="form-check-label" for="use_fts">Искать по тексту</label>
+        </div>
         </div>
         <div class="d-flex gap-2 mt-2">
           <button type="submit" class="btn btn-primary">Искать</button>
@@ -278,11 +280,11 @@
           <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Закрыть"></button>
         </div>
         <div class="modal-body small">
-          <p>👆 Вы можете <strong>выделить текст</strong>, чтобы предложить замену — это создаст <u>новое правило</u>
+          <p>Вы можете <strong>выделить текст</strong>, чтобы предложить замену — это создаст <u>новое правило</u>
             автозамены при распознавании текста.</p>
-          <p>🔁 Заменённые фразы <span style="border-bottom:1px dashed #856404;">подчёркнуты</span> — наведите на них,
+          <p>Заменённые фразы <span style="border-bottom:1px dashed #856404;">подчёркнуты</span> — наведите на них,
             чтобы увидеть исходный текст и отменить замену для текущего текста.</p>
-          <p>📁 Эти правила сохраняются и применяются ко всем будущим текстам.</p>
+          <p>Эти правила сохраняются и применяются ко всем будущим текстам.</p>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-info btn-sm" data-bs-dismiss="modal">Понятно</button>
@@ -290,7 +292,11 @@
       </div>
     </div>
   </div>
-
+  <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+    <div class="spinner-border text-primary" style="width: 5rem; height:5rem;" role="status">
+      <span class="visually-hidden">Загрузка...</span>
+    </div>
+  </div>
   <script>
     $.ajaxSetup({
       headers: { 'Content-Type': 'application/json' }
@@ -579,17 +585,23 @@
 
     });
 
-    $('#reapplyRulesBtn').on('click', function () {
-      const id = $(this).data('id');
-      if (!id) return showToast('ID записи не определён', 'Ошибка');
-
-      $.post('/api/reapply_rules', JSON.stringify({ record_id: id }), function () {
+  $('#reapplyRulesBtn').on('click', function () {
+    const id = $(this).data('id');
+    if (!id) return showToast('ID записи не определён', 'Ошибка');
+    const overlay = document.getElementById('loadingOverlay');
+    overlay.style.display = 'flex';
+    $.post('/api/reapply_rules', JSON.stringify({ record_id: id }))
+      .done(function () {
         showToast('Правила повторно применены к тексту');
-        $('#recordList .record-active').trigger('click'); // перерисовать
-      }).fail(function () {
+        $('#recordList .record-active').trigger('click');
+      })
+      .fail(function () {
         showToast('Ошибка при повторном применении правил', 'Ошибка');
+      })
+      .always(function () {
+        overlay.style.display = 'none';
       });
-    });
+  });
 
     transcriptBox.on('click', '.phrase-item', function (e) {
       // Предотвращаем конфликт с выделением текста
@@ -794,6 +806,26 @@
       });
     }
     updateQueueCounter();
+    document.addEventListener('keydown', function (e) {
+    // Игнорируем, если фокус в поле ввода или textarea
+    const activeTag = document.activeElement.tagName.toLowerCase();
+    if (activeTag === 'input' || activeTag === 'textarea') return;
+    // Только если нажата клавиша пробела
+    if (e.code === 'Space' || e.key === ' ') {
+      // Предотвращаем прокрутку страницы
+      e.preventDefault();
+      const audio = document.getElementById('audioPlayer');
+      if (!audio || !audio.currentSrc) return;
+      const playBtn = document.getElementById('playPause');
+      if (audio.paused) {
+        audio.play();
+        playBtn.textContent = '⏸';
+      } else {
+        audio.pause();
+        playBtn.textContent = '▶';
+      }
+    }
+  });
   </script>
 </body>
 

@@ -73,17 +73,17 @@ def search_records():
     records = query.order_by(desc(AudioRecord.audio_date)).limit(50).all()
     results = []
     fts_matches = set()
-    if use_fts and text_query:
-        with engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT audio_id FROM record_texts WHERE content MATCH :q"),
-                {'q': text_query}
-            )
-            fts_matches = {row[0] for row in result.fetchall()}
+    # if use_fts and text_query:
+    #     with engine.connect() as conn:
+    #         result = conn.execute(
+    #             text("SELECT audio_id FROM record_texts WHERE content MATCH :q"),
+    #             {'q': text_query}
+    #         )
+    #         fts_matches = {row[0] for row in result.fetchall()}
 
     for rec in records:
-        if use_fts and rec.id not in fts_matches:
-            continue
+        # if use_fts and rec.id not in fts_matches:
+        #         #     continue
         results.append({
             'id': rec.id,
             'case_number': rec.case_number,
@@ -264,7 +264,7 @@ def convert_case():
         final_name = f"femida_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
         final_tmp = os.path.join(TEMP_MP3_FOLDER, final_name)
         mix_cmd += [
-            '-filter_complex', f'amix=inputs={len(intermediate_files)}:duration=longest:dropout_transition=2',
+            '-filter_complex', f'amix=inputs={len(intermediate_files)}:duration=longest:dropout_transition=2,volume=20dB',
             '-ac', '1', '-ar', '16000', '-q:a', '2', final_tmp
         ]
         result = subprocess.run(mix_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -304,9 +304,15 @@ def export_text(record_id):
             text,
             flags=re.DOTALL
         )
+    def clean_to_cp1251(text):
+        """Удаляет все символы, не входящие в CP1251"""
+        return ''.join(ch for ch in text if ch.encode('cp1251', errors='ignore'))
+
     def phrases_to_rtf(phrases):
         lines = [
-            strip_replace_tags(p['text']).replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
+            clean_to_cp1251(
+                strip_replace_tags(p['text'])
+            ).replace('\\', '\\\\').replace('{', '\\{').replace('}', '\\}')
             for p in phrases
         ]
         rtf_body = '\\par\n'.join(lines)
@@ -327,8 +333,11 @@ def export_text(record_id):
     temp_path = os.path.join(TEMP_MP3_FOLDER, filename)
     with open(temp_path, 'w', encoding='cp1251') as f:
         f.write(rtf_text)
-    return send_file(temp_path, as_attachment=True,
-                     download_name=f"{record.case_number}_{record.audio_date.strftime('%Y-%m-%d_%H-%M')}.rtf")
+    return send_file(
+        temp_path,
+        as_attachment=True,
+        download_name=f"{record.case_number}_{record.audio_date.strftime('%Y-%m-%d_%H-%M')}.rtf"
+    )
 
 
 @api.route('/add_replacement_rule', methods=['POST'])
@@ -370,7 +379,7 @@ def add_replacement_rule():
     new_tagged = apply_replacement_with_tags(strip_replacement_tags(old_text), rules)
     with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
         f.write(new_tagged)
-    index_record_text(record.id, strip_replacement_tags(new_tagged))
+    # index_record_text(record.id, strip_replacement_tags(new_tagged))
     session.close()
     return jsonify({'rule_index': rule_index})
 
@@ -401,7 +410,7 @@ def undo_replacement():
         return jsonify({'error': 'Совпадение не найдено'}), 404
     with open(path, 'w', encoding='utf-8') as f:
         f.write(new_content)
-    index_record_text(record.id, strip_replacement_tags(new_content))
+    # index_record_text(record.id, strip_replacement_tags(new_content))
     session.close()
     return jsonify({'status': 'ok'})
 
@@ -422,6 +431,6 @@ def reapply_rules():
     new_text = apply_replacement_with_tags(base_text, rules)
     with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
         f.write(new_text)
-    index_record_text(record.id, strip_replacement_tags(new_text))
+    # index_record_text(record.id, strip_replacement_tags(new_text))
     session.close()
     return jsonify({'status': 'ok'})

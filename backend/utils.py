@@ -241,7 +241,7 @@ def scan_and_populate_database(base_path: str, user_folder: str):
             tagged_text = apply_replacement_with_tags(content, rules)
             with open(txt_path, 'w', encoding='utf-8') as f:
                 f.write(tagged_text)
-            index_record_text(record_id, strip_replacement_tags(tagged_text))
+            # index_record_text(record_id, strip_replacement_tags(tagged_text))
         except Exception as e:
             print(f"⚠ Ошибка при обработке текста {txt_path}: {e}")
     return new_records

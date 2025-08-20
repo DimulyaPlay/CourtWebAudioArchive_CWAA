@@ -113,7 +113,7 @@ def run_orchestrator_loop():
                         target_path = os.path.join(RECOGNIZE_FOLDER, target_filename)
                         if not os.path.exists(target_path):
                             shutil.copy2(source_path, target_path)
-                            print(f"Копируем {source_path} → {target_path}")
+                            print(f"Копируем {source_path} в {target_path}")
                             needed-=1
                         else:
                             continue
@@ -140,8 +140,8 @@ def run_orchestrator_loop():
                         tagged_text = apply_replacement_with_tags(content, rules)
                     with open(source_txt_path, 'w', encoding='utf-8') as f:
                         f.write(tagged_text)
-                    index_record_text(record.id, strip_replacement_tags(tagged_text))
-                    print(f"Индексировали текст ID={record.id}")
+                    # index_record_text(record.id, strip_replacement_tags(tagged_text)) # Индексация отключена
+                    # print(f"Индексировали текст ID={record.id}")
                     shutil.move(source_txt_path, final_txt_path)
                     record.recognized_text_path = final_txt_path
                     session.commit()
