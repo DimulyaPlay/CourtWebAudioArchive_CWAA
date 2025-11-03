@@ -1,27 +1,22 @@
-from flask import request, jsonify, Blueprint, send_from_directory, send_file, after_this_request
+from flask import request, jsonify, Blueprint, send_file
 import os
 from backend.utils import (
-    get_file_hash,
-    compare_files,
     parse_transcript_file,
-    TEMP_MP3_FOLDER,
-    index_record_text
+    TEMP_MP3_FOLDER
 )
 from backend.recognition_orchestrator import (
-    get_phrase_replacement_rules,
     load_phrase_replacement_rules,
     apply_replacement_with_tags,
     strip_replacement_tags
 )
 from . import config
-from backend.db import Session, engine
+from backend.db import Session
 from backend.models import AudioRecord
-from sqlalchemy import text, desc
+from sqlalchemy import desc
 import zipfile
 import io
 from pathlib import Path
 from datetime import timedelta, datetime
-import tempfile
 import subprocess
 import re
 from threading import Semaphore
@@ -42,8 +37,6 @@ def search_records():
     comment = request.args.get('comment')
     date_from = request.args.get('date_from')
     date_to = request.args.get('date_to')
-    use_fts = request.args.get('use_fts')
-    text_query = request.args.get('text_query')
     user_folder = request.args.get('user_folder')
     if case_number:
         query = query.filter(AudioRecord.case_number.like(f"%{case_number}%"))
@@ -72,18 +65,8 @@ def search_records():
         query = query.filter(AudioRecord.user_folder.like(f"%{user_folder}%"))
     records = query.order_by(desc(AudioRecord.audio_date)).limit(50).all()
     results = []
-    fts_matches = set()
-    # if use_fts and text_query:
-    #     with engine.connect() as conn:
-    #         result = conn.execute(
-    #             text("SELECT audio_id FROM record_texts WHERE content MATCH :q"),
-    #             {'q': text_query}
-    #         )
-    #         fts_matches = {row[0] for row in result.fetchall()}
 
     for rec in records:
-        # if use_fts and rec.id not in fts_matches:
-        #         #     continue
         results.append({
             'id': rec.id,
             'case_number': rec.case_number,
@@ -379,7 +362,6 @@ def add_replacement_rule():
     new_tagged = apply_replacement_with_tags(strip_replacement_tags(old_text), rules)
     with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
         f.write(new_tagged)
-    # index_record_text(record.id, strip_replacement_tags(new_tagged))
     session.close()
     return jsonify({'rule_index': rule_index})
 
@@ -410,7 +392,6 @@ def undo_replacement():
         return jsonify({'error': 'Совпадение не найдено'}), 404
     with open(path, 'w', encoding='utf-8') as f:
         f.write(new_content)
-    # index_record_text(record.id, strip_replacement_tags(new_content))
     session.close()
     return jsonify({'status': 'ok'})
 
@@ -431,6 +412,5 @@ def reapply_rules():
     new_text = apply_replacement_with_tags(base_text, rules)
     with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
         f.write(new_text)
-    # index_record_text(record.id, strip_replacement_tags(new_text))
     session.close()
     return jsonify({'status': 'ok'})

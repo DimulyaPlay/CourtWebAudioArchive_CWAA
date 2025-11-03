@@ -2,9 +2,7 @@ from flask import render_template, Blueprint, request, jsonify
 import os
 from datetime import datetime
 import tempfile
-from werkzeug.utils import secure_filename
 import shutil
-from pydub import AudioSegment
 from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
@@ -110,7 +108,6 @@ def home_redirector(ajax=False):
             )
             session.add(record)
             session.commit()
-            # Получение ID записи перед закрытием сессии
             record_id = record.id
             session.close()
 

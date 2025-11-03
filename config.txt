@@ -1,4 +1,4 @@
-server_ip=10.59.56.189
+server_ip=100.69.216.31
 server_port=446
 public_audio_path=C:\Users\CourtUser\Desktop\test
 closed_audio_path=C:\Users\CourtUser\Desktop\test

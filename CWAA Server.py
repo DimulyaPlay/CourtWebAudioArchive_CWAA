@@ -78,7 +78,7 @@ def start_nginx():
     try:
         with open('logs/nginx_stderr.log', 'wb') as errlog:
             nginx_process = subprocess.Popen(
-                ['nginx-1.27.1/nginx.exe', '-c', os.path.abspath('nginx_dynamic.conf')],
+                ['nginx/nginx.exe', '-c', os.path.abspath('nginx_dynamic.conf')],
                 stdout=subprocess.DEVNULL, stderr=errlog
             )
         time.sleep(2)
@@ -351,8 +351,15 @@ class MainWindow(QMainWindow):
         global config
         config['server_ip'] = self.server_ip_combo.currentText()
         config['server_port'] = int(self.server_port_input.text())
-        config['public_audio_path'] = self.public_audio_path_input.text().replace('"', '')
-        config['closed_audio_path'] = self.closed_audio_path_input.text().replace('"', '')
+        public_audio_path = self.public_audio_path_input.text().replace('"', '')
+        closed_audio_path = self.closed_audio_path_input.text().replace('"', '')
+        try:
+            os.makedirs(public_audio_path, exist_ok=True)
+            os.makedirs(closed_audio_path, exist_ok=True)
+        except Exception as e:
+            self.show_error_message(f"Не удалось создать директории: {e}")
+        config['public_audio_path'] = public_audio_path
+        config['closed_audio_path'] = closed_audio_path
         config['recognize_text_from_audio_path'] = self.recognize_text_from_audio_path_input.text().replace('"', '')
         config['create_year_subfolders'] = "true" if self.create_year_subfolders.isChecked() else 'false'
         save_config(config)
@@ -410,7 +417,7 @@ class CourtroomManagerWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Управление залами")
-        self.setMinimumSize(400, 500)
+        self.setMinimumSize(500, 500)
 
         layout = QVBoxLayout()
         import_label = QLabel("🔁 Залы для сохранения аудиозаписей:")
@@ -420,6 +427,7 @@ class CourtroomManagerWindow(QWidget):
 
         cr_btns = QHBoxLayout()
         self.input_field = QLineEdit()
+        self.input_field.setPlaceholderText('Название зала')
         layout.addWidget(self.input_field)
         self.add_button = QPushButton("➕ Добавить")
         self.add_button.clicked.connect(self.add_courtroom)
@@ -439,7 +447,9 @@ class CourtroomManagerWindow(QWidget):
 
         import_form = QHBoxLayout()
         self.import_name = QLineEdit()
+        self.import_name.setPlaceholderText('Название зала')
         self.import_path = QLineEdit()
+        self.import_path.setPlaceholderText('Папка с записями фемиды')
         browse_btn = QPushButton("📁")
         browse_btn.clicked.connect(self.browse_folder)
         import_form.addWidget(self.import_name)

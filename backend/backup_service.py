@@ -1,14 +1,12 @@
 from PySide2.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QCheckBox, QTimeEdit, QSpinBox,
-    QPushButton, QFileDialog, QGridLayout, QGroupBox, QLineEdit, QProgressBar, QHBoxLayout, QMessageBox
+    QPushButton, QFileDialog, QGroupBox, QLineEdit, QProgressBar, QHBoxLayout, QMessageBox
 )
-from PySide2.QtCore import Qt, QTime, QTimer
-from PySide2.QtGui import QIcon
+from PySide2.QtCore import Qt, QTime
 from . import config
 import os
 import zipfile
 import datetime
-import shutil
 import threading
 import schedule
 import time as time_module

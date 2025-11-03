@@ -6,7 +6,7 @@ import re
 from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
-from backend.utils import is_file_fully_copied, index_record_text
+from backend.utils import is_file_fully_copied
 
 RECOGNIZE_FOLDER = config['recognize_text_from_audio_path']
 MAX_PENDING_FILES = 20
@@ -140,7 +140,7 @@ def run_orchestrator_loop():
                         tagged_text = apply_replacement_with_tags(content, rules)
                     with open(source_txt_path, 'w', encoding='utf-8') as f:
                         f.write(tagged_text)
-                    # index_record_text(record.id, strip_replacement_tags(tagged_text)) # Индексация отключена
+                    index_record_text(record.id, strip_replacement_tags(tagged_text)) # Индексация отключена
                     # print(f"Индексировали текст ID={record.id}")
                     shutil.move(source_txt_path, final_txt_path)
                     record.recognized_text_path = final_txt_path

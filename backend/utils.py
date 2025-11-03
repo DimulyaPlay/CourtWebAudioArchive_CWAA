@@ -1,12 +1,7 @@
 import os
-import shutil
-import time
 import hashlib
 import socket
-from traceback import print_exc
-import subprocess
-from sqlalchemy import text
-from backend.db import engine, Session
+from backend.db import Session
 from backend.models import AudioRecord
 import re
 from datetime import datetime
@@ -122,19 +117,6 @@ def is_file_fully_copied(file_path, check_interval=2, retries=5):
         print(f"Файл {file_path} еще копируется, ждем...")
     print(f"Файл {file_path} возможно поврежден или не завершен, пропускаем.")
     return False
-
-
-def index_record_text(audio_id: int, content: str):
-    with engine.begin() as conn:
-        print(f"[FTS] Переиндексация ID={audio_id}, размер текста={len(content)}")
-        conn.exec_driver_sql(
-            "DELETE FROM record_texts WHERE audio_id = ?",
-            (audio_id,)
-        )
-        conn.exec_driver_sql(
-            "INSERT INTO record_texts (audio_id, content) VALUES (?, ?)",
-            (audio_id, content)
-        )
 
 
 def parse_transcript_file(path):

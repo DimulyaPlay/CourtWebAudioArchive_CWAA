@@ -3,7 +3,7 @@ import traceback
 from flask import Flask
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import timedelta
 from .utils import read_create_config
 
 
@@ -23,6 +23,7 @@ def create_app():
         app.config['SECRET_KEY'] = 'ndfjknsdflkghnfhjkgndbfd dfghmdghnm'
         app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
         app.config['SEND_FILE_MAX_AGE_DEFAULT'] = timedelta(seconds=31536000)
+        app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"connect_args": {"check_same_thread": False, "timeout": 60}}
         from .views import views
         from .api import api
         app.register_blueprint(views, url_prefix='/')
