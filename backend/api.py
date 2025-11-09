@@ -11,7 +11,7 @@ from backend.recognition_orchestrator import (
 )
 from . import config
 from backend.db import Session
-from backend.models import AudioRecord
+from backend.models import AudioRecord, DownloadLog
 from sqlalchemy import desc
 import zipfile
 import io
@@ -101,6 +101,19 @@ def download_files():
 
     session = Session()
     records = session.query(AudioRecord).filter(AudioRecord.id.in_(ids)).all()
+    if records:
+        client_ip = request.headers.get('X-Real-IP')
+        now = datetime.utcnow()
+        for rec in records:
+            recent = session.query(DownloadLog).filter(
+                DownloadLog.record_id == rec.id,
+                DownloadLog.ip == client_ip,
+                DownloadLog.timestamp > now - timedelta(minutes=10)
+            ).first()
+            if not recent:
+                log = DownloadLog(record_id=rec.id, ip=client_ip, timestamp=now)
+                session.add(log)
+        session.commit()
     session.close()
 
     if len(records) == 1:

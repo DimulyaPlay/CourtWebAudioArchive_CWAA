@@ -131,11 +131,11 @@
         </select>
         <input type="text" class="form-control mb-2" name="comment" placeholder="Комментарий">
         <div style="display:none">
-        <input type="text" class="form-control mb-2" name="text_query" placeholder="Поиск по тексту">
-        <div class="form-check">
-          <input class="form-check-input" type="checkbox" name="use_fts" id="use_fts">
-          <label class="form-check-label" for="use_fts">Искать по тексту</label>
-        </div>
+          <input type="text" class="form-control mb-2" name="text_query" placeholder="Поиск по тексту">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="use_fts" id="use_fts">
+            <label class="form-check-label" for="use_fts">Искать по тексту</label>
+          </div>
         </div>
         <div class="d-flex gap-2 mt-2">
           <button type="submit" class="btn btn-primary">Искать</button>
@@ -585,23 +585,23 @@
 
     });
 
-  $('#reapplyRulesBtn').on('click', function () {
-    const id = $(this).data('id');
-    if (!id) return showToast('ID записи не определён', 'Ошибка');
-    const overlay = document.getElementById('loadingOverlay');
-    overlay.style.display = 'flex';
-    $.post('/api/reapply_rules', JSON.stringify({ record_id: id }))
-      .done(function () {
-        showToast('Правила повторно применены к тексту');
-        $('#recordList .record-active').trigger('click');
-      })
-      .fail(function () {
-        showToast('Ошибка при повторном применении правил', 'Ошибка');
-      })
-      .always(function () {
-        overlay.style.display = 'none';
-      });
-  });
+    $('#reapplyRulesBtn').on('click', function () {
+      const id = $(this).data('id');
+      if (!id) return showToast('ID записи не определён', 'Ошибка');
+      const overlay = document.getElementById('loadingOverlay');
+      overlay.style.display = 'flex';
+      $.post('/api/reapply_rules', JSON.stringify({ record_id: id }))
+        .done(function () {
+          showToast('Правила повторно применены к тексту');
+          $('#recordList .record-active').trigger('click');
+        })
+        .fail(function () {
+          showToast('Ошибка при повторном применении правил', 'Ошибка');
+        })
+        .always(function () {
+          overlay.style.display = 'none';
+        });
+    });
 
     transcriptBox.on('click', '.phrase-item', function (e) {
       // Предотвращаем конфликт с выделением текста
@@ -647,12 +647,61 @@
     });
 
     $('#downloadSelected').on('click', function () {
-      const selectedIds = $('.record-checkbox:checked').map(function () {
+      let selectedIds = $('.record-checkbox:checked').map(function () {
         return 'id=' + $(this).val();
       }).get().join('&');
-      if (!selectedIds) return alert('Выберите хотя бы одну запись для скачивания');
-      window.location.href = '/api/download?' + selectedIds;
+
+      if (!selectedIds) {
+        const active = $('.record-active');
+        if (active.length > 0) {
+          const id = active.data('id');
+          selectedIds = 'id=' + id;
+        }
+      }
+
+      if (!selectedIds) {
+        showToast('Не выделена ни одна из записей для скачивания.', 'Ошибка');
+        return;
+      }
+
+      const overlay = document.getElementById('loadingOverlay');
+      overlay.style.display = 'flex';
+
+      fetch('/api/download?' + selectedIds)
+        .then(response => {
+          if (!response.ok) throw new Error('Ошибка сервера: ' + response.status);
+          return response.blob().then(blob => ({
+            blob,
+            filename: getFileNameFromDisposition(response.headers.get('Content-Disposition'))
+          }));
+        })
+        .then(({ blob, filename }) => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename || 'records.zip';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        })
+        .catch(err => {
+          showToast('Ошибка при скачивании: ' + err.message, 'Ошибка');
+        })
+        .finally(() => {
+          overlay.style.display = 'none';
+        });
+
+      function getFileNameFromDisposition(disposition) {
+        if (!disposition) return null;
+        const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+        if (match && match[1]) {
+          return decodeURIComponent(match[1].replace(/['"]/g, ''));
+        }
+        return null;
+      }
     });
+
 
     $('#downloadTextBtn').on('click', function () {
       const id = $(this).data('id');
@@ -807,25 +856,25 @@
     }
     updateQueueCounter();
     document.addEventListener('keydown', function (e) {
-    // Игнорируем, если фокус в поле ввода или textarea
-    const activeTag = document.activeElement.tagName.toLowerCase();
-    if (activeTag === 'input' || activeTag === 'textarea') return;
-    // Только если нажата клавиша пробела
-    if (e.code === 'Space' || e.key === ' ') {
-      // Предотвращаем прокрутку страницы
-      e.preventDefault();
-      const audio = document.getElementById('audioPlayer');
-      if (!audio || !audio.currentSrc) return;
-      const playBtn = document.getElementById('playPause');
-      if (audio.paused) {
-        audio.play();
-        playBtn.textContent = '⏸';
-      } else {
-        audio.pause();
-        playBtn.textContent = '▶';
+      // Игнорируем, если фокус в поле ввода или textarea
+      const activeTag = document.activeElement.tagName.toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea') return;
+      // Только если нажата клавиша пробела
+      if (e.code === 'Space' || e.key === ' ') {
+        // Предотвращаем прокрутку страницы
+        e.preventDefault();
+        const audio = document.getElementById('audioPlayer');
+        if (!audio || !audio.currentSrc) return;
+        const playBtn = document.getElementById('playPause');
+        if (audio.paused) {
+          audio.play();
+          playBtn.textContent = '⏸';
+        } else {
+          audio.pause();
+          playBtn.textContent = '▶';
+        }
       }
-    }
-  });
+    });
   </script>
 </body>
 

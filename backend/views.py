@@ -104,7 +104,8 @@ def home_redirector(ajax=False):
                 file_path=file_path,
                 comment=comment,
                 courtroom=courtroom,
-                recognize_text=bool(recognize_text)
+                recognize_text=bool(recognize_text),
+                uploaded_ip=request.headers.get('X-Real-IP')
             )
             session.add(record)
             session.commit()
