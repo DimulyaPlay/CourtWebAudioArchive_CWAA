@@ -129,9 +129,6 @@
           <span id="file-link">{{ success }}</span>
           <button id="copy-path-btn" class="btn btn-secondary btn-sm ml-2">Копировать путь</button>
         </div>
-        <div class="alert alert-info" id="custom-popup" role="alert" style="display: none;">
-          Путь скопирован в буфер обмена!
-        </div>
         {% endif %}
       </div>
     </form>
@@ -392,18 +389,12 @@
               <div>
                 <strong>Файл успешно загружен!</strong><br>
                 Прямая ссылка на файл:
-                <span id="file-link">${path}</span>
+                <span id="file-link">${path}</span><br>
                 <button id="copy-path-btn" class="btn btn-primary btn-sm ml-2">
                   <i class="bi bi-clipboard"></i> Копировать путь
                 </button>
                 ${downloadButtonHtml}
               </div>
-            </div>
-
-            <div class="alert alert-info d-flex align-items-center" id="custom-popup"
-                role="alert" style="display: none;">
-              <i class="bi bi-clipboard-check text-info me-2"></i>
-              <div>Путь скопирован в буфер обмена!</div>
             </div>
           `);
             $('form')[0].reset();

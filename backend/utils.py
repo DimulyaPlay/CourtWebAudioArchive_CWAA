@@ -13,6 +13,7 @@ TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
 os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
 FILE_LIFETIME_SECONDS = 3600  # 1 час
 CHECK_INTERVAL_SECONDS = 300  # каждые 5 минут
+version = "2.1"
 
 
 def cleanup_old_mp3_files():
@@ -223,7 +224,6 @@ def scan_and_populate_database(base_path: str, user_folder: str):
             tagged_text = apply_replacement_with_tags(content, rules)
             with open(txt_path, 'w', encoding='utf-8') as f:
                 f.write(tagged_text)
-            # index_record_text(record_id, strip_replacement_tags(tagged_text))
         except Exception as e:
             print(f"⚠ Ошибка при обработке текста {txt_path}: {e}")
     return new_records

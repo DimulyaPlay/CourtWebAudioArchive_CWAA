@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 import tempfile
 import shutil
+import music_tag
 from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
@@ -91,7 +92,21 @@ def home_redirector(ajax=False):
             os.remove(temp_path)
             if ajax:
                 return jsonify({'error': "Аудиозапись в указанные время и дату уже существует по этому делу. Укажите другие данные."}), 400
-
+        try:
+            f = music_tag.load_file(temp_path)
+            f['title'] = f"{case_number} — {timestamp.strftime('%Y-%m-%d %H:%M')}"
+            f['artist'] = 'Судья: ' + str(user_folder)  # Можно трактовать как "Судья"
+            f['album'] = 'Зал: ' + str(courtroom or "Неизвестный зал")
+            comment_text = (comment or "").strip()
+            if len(comment_text) > 500:
+                comment_text = comment_text[:500] + "…"
+            if comment_text:
+                f['comment'] = f"Комментарий: {comment_text}"
+            f['year'] = timestamp.year
+            f['genre'] = "Судебное заседание"
+            f.save()
+        except Exception as e:
+            print(f"Ошибка при записи метаданных MP3: {e}")
         shutil.move(temp_path, file_path)
 
         record_id = None

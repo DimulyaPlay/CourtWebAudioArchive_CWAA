@@ -2,7 +2,7 @@ from PySide2.QtCore import Signal, Qt, QTranslator, QLocale, QLibraryInfo, QCore
 from PySide2.QtGui import QIcon
 import time
 from backend import create_app, config
-from backend.utils import save_config, get_all_public_ips, cleanup_old_mp3_files
+from backend.utils import save_config, get_all_public_ips, cleanup_old_mp3_files, version
 from backend.recognition_orchestrator import run_orchestrator_loop
 from waitress import serve
 import subprocess
@@ -17,7 +17,7 @@ import sys
 from backend.backup_service import BackupSettingsWindow
 
 
-# .venv/Scripts/pyinstaller.exe --windowed --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx-1.27.1;nginx-1.27.1" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffmpeg.exe;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffprobe.exe;." "CWAA Server.py"
+# .venv/Scripts/pyinstaller.exe --windowed --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx;nginx" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffmpeg.exe;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffprobe.exe;." "CWAA Server.py"
 if getattr(sys, 'frozen', False):
     sys.stdout = open('console_output.log', 'a', buffering=1)
     sys.stderr = open('console_errors.log', 'a', buffering=1)
@@ -58,6 +58,7 @@ nginx_process = None
 flask_thread = None
 flask_app = None
 
+
 def generate_nginx_config(config):
     try:
         nginx_config = Template(nginx_config_template).safe_substitute(
@@ -72,6 +73,7 @@ def generate_nginx_config(config):
         return 0, ''
     except Exception as e:
         return 1, 'generate_nginx_config:'+str(e)
+
 
 def start_nginx():
     global nginx_process
@@ -88,6 +90,7 @@ def start_nginx():
         return 0, ""
     except Exception as e:
         return 1, f"start_nginx: {str(e)}"
+
 
 def stop_nginx():
     global nginx_process
@@ -119,6 +122,7 @@ def stop_nginx():
         if os.path.exists(pid_file):
             os.remove(pid_file)
         nginx_process = None
+
 
 def start_flask():
     global flask_thread, flask_app
@@ -153,9 +157,11 @@ def start_service():
         print("Ошибка: Flask App не создан!")
         return
 
+
 def stop_service():
     global flask_thread
     stop_nginx()
+
 
 class MainWindow(QMainWindow):
     nginx_error_signal = Signal(str)
@@ -165,7 +171,7 @@ class MainWindow(QMainWindow):
         self.backup_window = None
         self.monitor_thread = None
         self.stop_threads_event = threading.Event()
-        self.setWindowTitle("Сервер CWAA")
+        self.setWindowTitle(f"Сервер CWAA, версия {version}")
         self.setMinimumSize(500, 400)
         self.setWindowIcon(QIcon('cwaa-icon.ico'))
 
@@ -206,8 +212,11 @@ class MainWindow(QMainWindow):
         self.firewall_button = QPushButton(
             "🛡 Создать правило в брандмауэре для указанного порта\nТребуется запуск от имени администратора")
         self.firewall_button.clicked.connect(self.create_firewall_rule)
-        self.scan_button = QPushButton("📂 Сканировать папки и импортировать записи")
+        self.scan_button = QPushButton("📂 Восстановить файл базы из директории")
         self.scan_button.clicked.connect(self.scan_archives)
+        if "-restore_base_from_dir" not in sys.argv:
+            self.scan_button.setDisabled(True)
+            self.scan_button.setToolTip('Запустите с параметром -restore_base_from_dir чтобы создать новую базу из имеющегося аудиоархива')
 
         self.backup_button = QPushButton("🛠 Параметры резервного копирования")
         self.backup_button.clicked.connect(self.open_backup_settings)
