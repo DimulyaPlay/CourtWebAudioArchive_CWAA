@@ -5,3 +5,8 @@
 /build/
 /dist/
 /.venv/
+/.idea
+/audio_archive.db
+/backup_config.txt
+/courtrooms.txt
+/import_sources.txt
