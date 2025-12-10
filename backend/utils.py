@@ -28,7 +28,7 @@ def cleanup_old_mp3_files():
                         os.remove(file_path)
                         print(f"[CLEANUP] Deleted: {file_path}")
         except Exception as e:
-            print(f"[CLEANUP ERROR] {e}")
+            pass
         time.sleep(CHECK_INTERVAL_SECONDS)
 
 def get_available_courtrooms():

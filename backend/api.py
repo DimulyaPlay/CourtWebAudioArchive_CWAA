@@ -251,7 +251,7 @@ def convert_case():
             cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'adpcm_ima_wav', out_tmp]
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if result.returncode != 0:
-                return jsonify({'error': f'ffmpeg concat error: {result.stderr.decode()[:200]}'}), 500
+                return jsonify({'error': f'ffmpeg concat error: {result.stderr.decode()[180:]}'}), 500
             intermediate_files.append(out_tmp)
         # Смешивание всех каналов
         mix_cmd = ['ffmpeg', '-y']
