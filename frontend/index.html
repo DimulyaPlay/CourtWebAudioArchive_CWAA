@@ -18,7 +18,7 @@
         <i class="bi bi-archive"></i> Просмотр архива аудиопротоколов →
       </button>
     </div>
-    <h2 class="mb-2">{{ title }}</h2>
+    <h4 class="mb-2">{{ title }}</h4>
 
     <form action="/" enctype="multipart/form-data" method="POST">
       <div class="mb-2">
@@ -160,7 +160,7 @@
             <option value="">Выберите зал...</option>
           </select>
           <input class="form-control mb-2" id="femida-filter" placeholder="Фильтр по названию..." type="text">
-          <div id="femida-records" style="max-height: 250px; overflow-y: auto;"></div>
+          <div id="femida-records" style="max-height: 200px; overflow-y: auto;"></div>
           <div class="mt-3" id="femida-preview" style="display:none;">
             <audio controls id="femida-audio" style="width: 100%"></audio>
             <button class="btn btn-danger btn-sm mt-2" id="remove-selection">

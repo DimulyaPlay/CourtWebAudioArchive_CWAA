@@ -101,6 +101,14 @@ def download_files():
 
     session = Session()
     records = session.query(AudioRecord).filter(AudioRecord.id.in_(ids)).all()
+    files = [
+        {
+            "id": rec.id,
+            "file_path": rec.file_path,
+            "case_number": rec.case_number
+        }
+        for rec in records
+    ]
     if records:
         client_ip = request.headers.get('X-Real-IP')
         now = datetime.utcnow()
@@ -116,8 +124,8 @@ def download_files():
         session.commit()
     session.close()
 
-    if len(records) == 1:
-        file_path = records[0].file_path
+    if len(files) == 1:
+        file_path = files[0]["file_path"]
         if not os.path.exists(file_path):
             return "Файл не найден.", 404
         return send_file(file_path, as_attachment=True)
@@ -126,13 +134,13 @@ def download_files():
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         case_list = set()
-        for rec in records:
-            print("текущий сет:", case_list)
-            if os.path.exists(rec.file_path):
-                print("добавляем в сет:", rec.case_number)
-                case_list.add(rec.case_number)
-                arcname = os.path.basename(rec.file_path)
-                zf.write(rec.file_path, arcname)
+        for f in files:
+            if os.path.exists(f["file_path"]):
+                case_list.add(f["case_number"])
+                zf.write(
+                    f["file_path"],
+                    os.path.basename(f["file_path"])
+                )
     print("финальный сет:", case_list)
     download_name = '; '.join(case_list)+'.zip'
     zip_buffer.seek(0)
