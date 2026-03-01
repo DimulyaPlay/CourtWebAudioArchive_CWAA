@@ -7,6 +7,8 @@ from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
 from backend.utils import is_file_fully_copied
+import subprocess
+import sys
 
 RECOGNIZE_FOLDER = config['recognize_text_from_audio_path']
 MAX_PENDING_FILES = 20
@@ -94,75 +96,93 @@ def strip_replacement_tags(tagged_text):
 def run_orchestrator_loop():
     if not RECOGNIZE_FOLDER or not os.path.exists(RECOGNIZE_FOLDER):
         return
+    ASR_EXE = os.path.abspath(os.path.join(os.getcwd(), "GigaAM_ASR", "GigaAM_ASR.exe"))
+    CHECK_INTERVAL_SECONDS = 60
     while True:
+        session = None
         try:
             session = Session()
-            pending_mp3 = [f for f in os.listdir(RECOGNIZE_FOLDER) if f.endswith('.mp3')]
-            if len(pending_mp3) < MAX_PENDING_FILES:
-                needed = MAX_PENDING_FILES - len(pending_mp3)
-                # Получаем нужные записи для распознавания
-                records = session.query(AudioRecord).filter(
-                    AudioRecord.recognize_text == True,
-                    AudioRecord.recognized_text_path == None
-                ).all()
-                for record in records:
-                    if needed:
-                        source_path = record.file_path
-                        base_filename = os.path.basename(source_path)
-                        target_filename = f"{record.id}___{base_filename}"
-                        target_path = os.path.join(RECOGNIZE_FOLDER, target_filename)
-                        if not os.path.exists(target_path):
-                            shutil.copy2(source_path, target_path)
-                            print(f"Копируем {source_path} в {target_path}")
-                            needed-=1
-                        else:
-                            continue
-            pending_txt = [f for f in os.listdir(RECOGNIZE_FOLDER) if f.endswith('.txt') and '___' in f]
-            for txt_file in pending_txt:
-                id_part, original_name = txt_file.split('___', 1)
-                try:
-                    record_id = int(id_part)
-                except ValueError:
+            # 1) Берём записи из БД, которые надо распознать (ограничиваем пачку)
+            records = session.query(AudioRecord).filter(
+                AudioRecord.recognize_text == True,
+                AudioRecord.recognized_text_path == None
+            ).limit(MAX_PENDING_FILES).all()
+            if not records:
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+            # 2) Убеждаемся, что mp3 лежат в папке распознавания (копируем недостающие)
+            mp3_to_recognize = []
+            for record in records:
+                source_path = record.file_path
+                base_filename = os.path.basename(source_path)
+                target_filename = f"{record.id}___{base_filename}"
+                target_path = os.path.join(RECOGNIZE_FOLDER, target_filename)
+                if not os.path.exists(target_path):
+                    shutil.copy2(source_path, target_path)
+                    print(f"[ASR] Копируем {source_path} -> {target_path}")
+                mp3_to_recognize.append(target_path)
+            # 3) Запускаем локальный ASR на всей пачке и ждём завершения
+            if not os.path.exists(ASR_EXE):
+                print(f"[ASR] Не найден исполняемый файл: {ASR_EXE}")
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+            cmd = [ASR_EXE, *mp3_to_recognize]
+            print(f"[ASR] Запуск: {' '.join(cmd[:3])}{' ...' if len(cmd) > 3 else ''}")
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=os.getcwd()
+            )
+            if proc.returncode != 0:
+                print(f"[ASR] Ошибка распознавания. code={proc.returncode}")
+                if proc.stderr:
+                    print(proc.stderr[-1500:])
+                time.sleep(CHECK_INTERVAL_SECONDS)
+                continue
+            rules = get_phrase_replacement_rules()
+            for record in records:
+                mp3_name = f"{record.id}___{os.path.basename(record.file_path)}"
+                recognize_mp3_path = os.path.join(RECOGNIZE_FOLDER, mp3_name)
+                recognize_txt_path = os.path.splitext(recognize_mp3_path)[0] + ".txt"
+                if not os.path.exists(recognize_txt_path):
+                    print(f"[ASR] TXT не найден для {recognize_mp3_path}: ожидали {recognize_txt_path}")
                     continue
-                record = session.query(AudioRecord).get(record_id)
-                if not record:
-                    continue
-                source_txt_path = os.path.join(RECOGNIZE_FOLDER, txt_file)
-                if not is_file_fully_copied(source_txt_path):
-                    print(f"Файл {source_txt_path} ещё копируется, пропускаем...")
+                if not is_file_fully_copied(recognize_txt_path):
+                    print(f"[ASR] TXT ещё пишется, пропускаем: {recognize_txt_path}")
                     continue
                 archive_folder = os.path.dirname(record.file_path)
-                final_txt_path = os.path.join(archive_folder, original_name)
+                final_txt_path = os.path.join(archive_folder, os.path.basename(recognize_txt_path).split('___', 1)[1])
                 try:
-                    with open(source_txt_path, 'r', encoding='utf-8') as f:
+                    with open(recognize_txt_path, "r", encoding="utf-8") as f:
                         content = f.read()
-                        rules = get_phrase_replacement_rules()
-                        tagged_text = apply_replacement_with_tags(content, rules)
-                    with open(source_txt_path, 'w', encoding='utf-8') as f:
+                    tagged_text = apply_replacement_with_tags(content, rules)
+                    with open(final_txt_path, "w", encoding="utf-8") as f:
                         f.write(tagged_text)
-                    shutil.move(source_txt_path, final_txt_path)
                     record.recognized_text_path = final_txt_path
                     session.commit()
-                    print(f"Переместили распознанный текст {final_txt_path}")
-                    try:
-                        recognize_mp3_name = f"{record.id}___{os.path.basename(record.file_path)}"
-                        recognize_mp3_path = os.path.join(RECOGNIZE_FOLDER, recognize_mp3_name)
-                        recognize_docx_path = recognize_mp3_path.replace('.mp3', '.docx')
-                        if os.path.exists(recognize_docx_path):
-                            os.remove(recognize_docx_path)
-                            print(f"Удалили побочный {recognize_docx_path}")
-                        if os.path.exists(recognize_mp3_path):
-                            os.remove(recognize_mp3_path)
-                            print(f"Удалили из очереди {recognize_mp3_path}")
-                    except Exception as e:
-                        print(f"Не удалось удалить {recognize_mp3_path}: {e}")
+                    print(f"[ASR] Сохранён протокол: {final_txt_path}")
                 except Exception as e:
                     traceback.print_exc()
-                    print(f"Ошибка при индексировании текста для ID={record.id}: {e}")
+                    print(f"[ASR] Ошибка индексирования ID={record.id}: {e}")
+                    continue
+                try:
+                    recognize_docx_path = os.path.splitext(recognize_mp3_path)[0] + ".docx"
+                    if os.path.exists(recognize_docx_path):
+                        os.remove(recognize_docx_path)
+                        print(f"[ASR] Удалили побочный {recognize_docx_path}")
+                    if os.path.exists(recognize_txt_path):
+                        os.remove(recognize_txt_path)
+                    if os.path.exists(recognize_mp3_path):
+                        os.remove(recognize_mp3_path)
+                except Exception as e:
+                    print(f"[ASR] Не удалось подчистить хвосты: {e}")
+            continue
         except Exception as e:
             traceback.print_exc()
-            print("Ошибка в оркестраторе:", e)
+            print("[ASR] Ошибка в оркестраторе:", e)
+            time.sleep(CHECK_INTERVAL_SECONDS)
         finally:
-            session.close()
-
-        time.sleep(SLEEP_SECONDS)
+            if session:
+                session.close()

@@ -13,7 +13,7 @@ TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
 os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
 FILE_LIFETIME_SECONDS = 3600  # 1 час
 CHECK_INTERVAL_SECONDS = 300  # каждые 5 минут
-version = "2.1"
+version = "2.2"
 
 
 def cleanup_old_mp3_files():
@@ -122,52 +122,40 @@ def is_file_fully_copied(file_path, check_interval=2, retries=5):
 
 def parse_transcript_file(path):
     """
-    Универсальный парсер для .srt и faster-whisper-like файлов.
-    Возвращает список словарей: {'start': float, 'end': float, 'text': str}
+    Парсер формата GigaAM:
+    [HH:MM:SS - HH:MM:SS]: Текст
+    Возвращает список: {'start': float, 'end': float, 'text': str}
     """
+
+    def _tc_to_seconds(tc: str) -> float:
+        parts = [int(p) for p in tc.split(':')]
+        if len(parts) == 3:
+            mm, ss, cc = parts
+            total_cs = (mm * 60 + ss) * 100 + cc
+            return total_cs / 100.0
+        if len(parts) == 4:
+            hh, mm, ss, cc = parts
+            total_cs = (hh * 3600 + mm * 60 + ss) * 100 + cc
+            return total_cs / 100.0
+        raise ValueError(f"Bad timecode: {tc}")
+
     entries = []
     with open(path, 'r', encoding='utf-8') as f:
-        lines = [line.strip() for line in f if line.strip()]
-
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-
-        # .srt формат: 00:00:01,000 --> 00:00:03,000
-        srt_match = re.match(
-            r'(\d{2}):(\d{2}):(\d{2}),(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2}),(\d{3})', line)
-        if srt_match and i + 1 < len(lines):
-            start = int(srt_match[1]) * 3600 + int(srt_match[2]) * 60 + int(srt_match[3]) + int(srt_match[4]) / 1000
-            end = int(srt_match[5]) * 3600 + int(srt_match[6]) * 60 + int(srt_match[7]) + int(srt_match[8]) / 1000
-            text = lines[i + 1]
-            entries.append({'start': start, 'end': end, 'text': text})
-            i += 3
-            continue
-
-        # Faster-whisper формат с часами: [01:00:01.840 --> 01:00:05.740]
-        fw_hms_match = re.match(
-            r'\[(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]\s+(.*)', line)
-        if fw_hms_match:
-            start = int(fw_hms_match[1]) * 3600 + int(fw_hms_match[2]) * 60 + int(fw_hms_match[3]) + int(fw_hms_match[4]) / 1000
-            end = int(fw_hms_match[5]) * 3600 + int(fw_hms_match[6]) * 60 + int(fw_hms_match[7]) + int(fw_hms_match[8]) / 1000
-            text = fw_hms_match[9].strip()
-            entries.append({'start': start, 'end': end, 'text': text})
-            i += 1
-            continue
-
-        # Faster-whisper формат без часов (старый): [59:53.680 --> 59:54.480]
-        fw_ms_match = re.match(
-            r'\[(\d{2}):(\d{2})\.(\d{3})\s+-->\s+(\d{2}):(\d{2})\.(\d{3})\]\s+(.*)', line)
-        if fw_ms_match:
-            start = int(fw_ms_match[1]) * 60 + int(fw_ms_match[2]) + int(fw_ms_match[3]) / 1000
-            end = int(fw_ms_match[4]) * 60 + int(fw_ms_match[5]) + int(fw_ms_match[6]) / 1000
-            text = fw_ms_match[7].strip()
-            entries.append({'start': start, 'end': end, 'text': text})
-            i += 1
-            continue
-
-        i += 1
-
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            m = re.match(r'^\[([0-9:]+)\s*-\s*([0-9:]+)\]\s*:?\s*(.*)$', line)
+            if not m:
+                continue
+            start_tc, end_tc, text = m.groups()
+            start = _tc_to_seconds(start_tc)
+            end = _tc_to_seconds(end_tc)
+            if end < start:
+                end = start
+            text = text.strip()
+            if text:
+                entries.append({'start': start, 'end': end, 'text': text})
     return entries
 
 

@@ -1,6 +1,6 @@
-server_ip=10.59.56.189
+server_ip=192.168.1.109
 server_port=446
-public_audio_path=C:\Users\CourtUser\Desktop\test
-closed_audio_path=C:\Users\CourtUser\Desktop\test
-recognize_text_from_audio_path=C:\Новая папка (3)
+public_audio_path=C:\Users\dimas\Desktop\test
+closed_audio_path=C:\Users\dimas\Desktop\test
+recognize_text_from_audio_path=C:\Games
 create_year_subfolders=false

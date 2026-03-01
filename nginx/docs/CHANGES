@@ -1,4 +1,67 @@
 
+Changes with nginx 1.29.5                                        04 Feb 2026
+
+    *) Security: an attacker might inject plain text data in the response
+       from an SSL backend (CVE-2026-1642).
+
+    *) Bugfix: use-after-free might occur after switching to the next gRPC
+       or HTTP/2 backend.
+
+    *) Bugfix: an invalid HTTP/2 request might be sent after switching to
+       the next upstream.
+
+    *) Bugfix: a response with multiple ranges might be larger than the
+       source response.
+
+    *) Bugfix: fixed setting HTTP_HOST when proxying to FastCGI, SCGI, and
+       uwsgi backends.
+
+    *) Bugfix: fixed warning when compiling with MSVC 2022 x86.
+
+    *) Change: the logging level of the "ech_required" SSL error has been
+       lowered from "crit" to "info".
+
+
+Changes with nginx 1.29.4                                        09 Dec 2025
+
+    *) Feature: the ngx_http_proxy_module supports HTTP/2.
+
+    *) Feature: Encrypted ClientHello TLS extension support when using
+       OpenSSL ECH feature branch; the "ssl_ech_file" directive.
+       Thanks to Stephen Farrell.
+
+    *) Change: validation of host and port in the request line, "Host"
+       header field, and ":authority" pseudo-header field has been changed
+       to follow RFC 3986.
+
+    *) Change: now a single LF used as a line terminator in a chunked
+       request or response body is considered an error.
+
+    *) Bugfix: when using HTTP/3 with OpenSSL 3.5.1 or newer a segmentation
+       fault might occur in a worker process; the bug had appeared in
+       1.29.1.
+       Thanks to Jan Svojanovsky.
+
+    *) Bugfix: a segmentation fault might occur in a worker process if the
+       "try_files" directive and "proxy_pass" with a URI were used.
+
+
+Changes with nginx 1.29.3                                        28 Oct 2025
+
+    *) Feature: the "add_header_inherit" and "add_trailer_inherit"
+       directives.
+
+    *) Feature: the $request_port and $is_request_port variables.
+
+    *) Feature: the $ssl_sigalg and $ssl_client_sigalg variables.
+
+    *) Feature: the "volatile" parameter of the "geo" directive.
+
+    *) Feature: now certificate compression is available with BoringSSL.
+
+    *) Bugfix: now certificate compression is disabled with OCSP stapling.
+
+
 Changes with nginx 1.29.2                                        07 Oct 2025
 
     *) Feature: now nginx can be built with AWS-LC.
