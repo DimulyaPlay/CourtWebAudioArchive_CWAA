@@ -34,21 +34,23 @@ def home_redirector(ajax=False):
         recognize_text = request.form.get('recognize_text')
         closed_session = request.form.get('closed_session')
         imported_temp_id = request.form.get('imported_temp_id')
+        final_temp_id = request.form.get('final_temp_id')
         temp_path = None
         if not user_folder or not case_number or not audio_date or not audio_time:
             if ajax:
                 return jsonify({'error': "Все поля обязательны для заполнения."}), 400
 
-        if not audio_file and not imported_temp_id:
+        effective_temp_id = final_temp_id or imported_temp_id
+        if not audio_file and not effective_temp_id:
             if ajax:
                 return jsonify({'error': "Не выбран файл и не прикреплена запись из Фемиды."}), 400
 
         try:
-            if imported_temp_id:
-                if not os.path.exists(imported_temp_id):
+            if effective_temp_id:
+                if not os.path.exists(effective_temp_id):
                     if ajax:
                         return jsonify({'error': "Временный файл от Фемиды не найден."}), 400
-                temp_path = imported_temp_id
+                temp_path = effective_temp_id
             else:
                 if not allowed_file(audio_file.filename):
                     if ajax:

@@ -21,6 +21,8 @@ import subprocess
 import re
 from threading import Semaphore
 import uuid
+import tempfile
+import shutil
 
 FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвертации одновременно
 
@@ -28,58 +30,129 @@ FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвер�
 api = Blueprint('api', __name__)
 
 
+def _json_error(message, status=400):
+    return jsonify({'error': message}), status
+
+
+def _download_name_from_cases(case_numbers):
+    cleaned = []
+    for case_number in sorted({str(item).strip() for item in case_numbers if item}):
+        safe = re.sub(r'[\\/:*?"<>|;]+', '_', case_number).strip(' ._')
+        if safe:
+            cleaned.append(safe)
+
+    if not cleaned:
+        return 'records.zip'
+
+    name = '_'.join(cleaned[:3])
+    if len(cleaned) > 3:
+        name += f'_plus_{len(cleaned) - 3}'
+    return f'{name[:120]}.zip'
+
+
+def _resolve_tool(tool_name):
+    local_tool = os.path.join(os.getcwd(), f'{tool_name}.exe')
+    if os.path.exists(local_tool):
+        return local_tool
+    return tool_name
+
+
+def _run_ffmpeg(cmd):
+    cmd = [_resolve_tool('ffmpeg')] + cmd[1:]
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def _run_ffprobe(file_path):
+    cmd = [
+        _resolve_tool('ffprobe'),
+        '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        file_path
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or 'ffprobe failed')
+    return float(result.stdout.strip())
+
+
+def _build_temp_asset_response(temp_path, source_name=None, date=None):
+    filename = os.path.basename(temp_path)
+    return {
+        'temp_id': temp_path,
+        'temp_url': f"/api/temp_audio/{filename}",
+        'name': source_name or filename,
+        'duration': round(_run_ffprobe(temp_path), 3),
+        'date': date
+    }
+
+
+def _normalize_segments(duration, trim_start, trim_end, cut_start, cut_end, mode):
+    trim_start = max(0.0, min(float(trim_start or 0), duration))
+    trim_end = max(trim_start, min(float(trim_end or duration), duration))
+    if mode == 'cut':
+        cut_start = max(trim_start, min(float(cut_start or trim_start), trim_end))
+        cut_end = max(cut_start, min(float(cut_end or trim_end), trim_end))
+        segments = []
+        if cut_start > trim_start:
+            segments.append((trim_start, cut_start))
+        if cut_end < trim_end:
+            segments.append((cut_end, trim_end))
+        return segments
+    return [(trim_start, trim_end)] if trim_end > trim_start else []
+
+
 @api.route('/search')
 def search_records():
-    session = Session()
-    query = session.query(AudioRecord)
-    case_number = request.args.get('case_number')
-    courtroom = request.args.get('courtroom')
-    comment = request.args.get('comment')
-    date_from = request.args.get('date_from')
-    date_to = request.args.get('date_to')
-    user_folder = request.args.get('user_folder')
-    if case_number:
-        query = query.filter(AudioRecord.case_number.like(f"%{case_number}%"))
-    if courtroom:
-        query = query.filter(AudioRecord.courtroom.like(f"%{courtroom}%"))
-    if comment:
-        query = query.filter(AudioRecord.comment.like(f"%{comment}%"))
-    if date_from and date_to and date_from == date_to:
-        try:
-            start_dt = datetime.strptime(date_from, "%Y-%m-%d")
-            end_dt = start_dt + timedelta(days=1)
-            query = query.filter(AudioRecord.audio_date >= start_dt, AudioRecord.audio_date < end_dt)
-        except ValueError:
-            pass
-    else:
-        if date_from:
-            query = query.filter(AudioRecord.audio_date >= date_from)
-        if date_to:
+    with Session() as session:
+        query = session.query(AudioRecord)
+        case_number = request.args.get('case_number')
+        courtroom = request.args.get('courtroom')
+        comment = request.args.get('comment')
+        date_from = request.args.get('date_from')
+        date_to = request.args.get('date_to')
+        user_folder = request.args.get('user_folder')
+        if case_number:
+            query = query.filter(AudioRecord.case_number.like(f"%{case_number}%"))
+        if courtroom:
+            query = query.filter(AudioRecord.courtroom.like(f"%{courtroom}%"))
+        if comment:
+            query = query.filter(AudioRecord.comment.like(f"%{comment}%"))
+        if date_from and date_to and date_from == date_to:
             try:
-                # Добавляем +1 день к date_to, чтобы включить его полностью
-                end_dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
-                query = query.filter(AudioRecord.audio_date < end_dt)
+                start_dt = datetime.strptime(date_from, "%Y-%m-%d")
+                end_dt = start_dt + timedelta(days=1)
+                query = query.filter(AudioRecord.audio_date >= start_dt, AudioRecord.audio_date < end_dt)
             except ValueError:
                 pass
-    if user_folder:
-        query = query.filter(AudioRecord.user_folder.like(f"%{user_folder}%"))
-    records = query.order_by(desc(AudioRecord.audio_date)).limit(50).all()
-    results = []
+        else:
+            if date_from:
+                query = query.filter(AudioRecord.audio_date >= date_from)
+            if date_to:
+                try:
+                # Добавляем +1 день к date_to, чтобы включить его полностью
+                    end_dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+                    query = query.filter(AudioRecord.audio_date < end_dt)
+                except ValueError:
+                    pass
+        if user_folder:
+            query = query.filter(AudioRecord.user_folder.like(f"%{user_folder}%"))
+        records = query.order_by(desc(AudioRecord.audio_date)).limit(50).all()
+        results = []
 
-    for rec in records:
-        results.append({
-            'id': rec.id,
-            'case_number': rec.case_number,
-            'user_folder': rec.user_folder,
-            'date': rec.audio_date.isoformat(),
-            'courtroom': rec.courtroom,
-            'comment': rec.comment,
-            'file_path': rec.file_path,
-            'recognized_text_path': rec.recognized_text_path,
-        })
+        for rec in records:
+            results.append({
+                'id': rec.id,
+                'case_number': rec.case_number,
+                'user_folder': rec.user_folder,
+                'date': rec.audio_date.isoformat(),
+                'courtroom': rec.courtroom,
+                'comment': rec.comment,
+                'file_path': rec.file_path,
+                'recognized_text_path': rec.recognized_text_path,
+            })
 
-    session.close()
-    return jsonify(results)
+        return jsonify(results)
 
 
 @api.route('/audio/<path:filename>')
@@ -99,30 +172,28 @@ def download_files():
     if not ids:
         return "Не переданы ID файлов.", 400
 
-    session = Session()
-    records = session.query(AudioRecord).filter(AudioRecord.id.in_(ids)).all()
-    files = [
-        {
-            "id": rec.id,
-            "file_path": rec.file_path,
-            "case_number": rec.case_number
-        }
-        for rec in records
-    ]
-    if records:
-        client_ip = request.headers.get('X-Real-IP')
-        now = datetime.utcnow()
-        for rec in records:
-            recent = session.query(DownloadLog).filter(
-                DownloadLog.record_id == rec.id,
-                DownloadLog.ip == client_ip,
-                DownloadLog.timestamp > now - timedelta(minutes=10)
-            ).first()
-            if not recent:
-                log = DownloadLog(record_id=rec.id, ip=client_ip, timestamp=now)
-                session.add(log)
-        session.commit()
-    session.close()
+    with Session() as session:
+        records = session.query(AudioRecord).filter(AudioRecord.id.in_(ids)).all()
+        files = [
+            {
+                "id": rec.id,
+                "file_path": rec.file_path,
+                "case_number": rec.case_number
+            }
+            for rec in records
+        ]
+        if records:
+            client_ip = request.headers.get('X-Real-IP') or request.remote_addr or 'unknown'
+            now = datetime.utcnow()
+            for rec in records:
+                recent = session.query(DownloadLog).filter(
+                    DownloadLog.record_id == rec.id,
+                    DownloadLog.ip == client_ip,
+                    DownloadLog.timestamp > now - timedelta(minutes=10)
+                ).first()
+                if not recent:
+                    session.add(DownloadLog(record_id=rec.id, ip=client_ip, timestamp=now))
+            session.commit()
 
     if len(files) == 1:
         file_path = files[0]["file_path"]
@@ -142,16 +213,15 @@ def download_files():
                     os.path.basename(f["file_path"])
                 )
     print("финальный сет:", case_list)
-    download_name = '; '.join(case_list)+'.zip'
+    download_name = _download_name_from_cases(case_list)
     zip_buffer.seek(0)
     return send_file(zip_buffer, mimetype='application/zip', download_name=download_name, as_attachment=True)
 
 
 @api.route('/record/<int:record_id>')
 def get_record_data(record_id):
-    session = Session()
-    record = session.query(AudioRecord).get(record_id)
-    session.close()
+    with Session() as session:
+        record = session.get(AudioRecord, record_id)
     if not record:
         return jsonify({"error": "Протокол не найден"}), 404
     # Определяем путь до аудио
@@ -172,7 +242,7 @@ def get_record_data(record_id):
 @api.route('/reset_transcription/<int:record_id>', methods=['POST'])
 def reset_transcription(record_id):
     session = Session()
-    record = session.query(AudioRecord).get(record_id)
+    record = session.get(AudioRecord, int(record_id))
     if not record:
         session.close()
         return jsonify({"error": "Протокол не найден"}), 404
@@ -192,12 +262,12 @@ def reset_transcription(record_id):
 
 @api.route('/get_vr_queue_len')
 def get_vr_queue_len():
-    session = Session()
-    records = session.query(AudioRecord).filter(
-        AudioRecord.recognize_text == True,
-        AudioRecord.recognized_text_path == None
-    ).all()
-    return jsonify({'records_to_vr':len(records)})
+    with Session() as session:
+        count = session.query(AudioRecord).filter(
+            AudioRecord.recognize_text.is_(True),
+            AudioRecord.recognized_text_path.is_(None)
+        ).count()
+    return jsonify({'records_to_vr': count})
 
 
 @api.route('/import_sources')
@@ -257,9 +327,9 @@ def convert_case():
             concat_filter += f'concat=n={len(group)}:v=0:a=1[out]'
             out_tmp = os.path.join(TEMP_MP3_FOLDER, f"intermediate_{idx}.wav")
             cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'adpcm_ima_wav', out_tmp]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            result = _run_ffmpeg(cmd)
             if result.returncode != 0:
-                return jsonify({'error': f'ffmpeg concat error: {result.stderr.decode()[180:]}'}), 500
+                return jsonify({'error': f'ffmpeg concat error: {result.stderr[180:]}'}), 500
             intermediate_files.append(out_tmp)
         # Смешивание всех каналов
         mix_cmd = ['ffmpeg', '-y']
@@ -271,9 +341,9 @@ def convert_case():
             '-filter_complex', f'amix=inputs={len(intermediate_files)}:duration=longest:dropout_transition=2,volume=20dB',
             '-ac', '1', '-ar', '16000', '-q:a', '2', final_tmp
         ]
-        result = subprocess.run(mix_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = _run_ffmpeg(mix_cmd)
         if result.returncode != 0:
-            return jsonify({'error': f'ffmpeg mix error: {result.stderr.decode()[:200]}'}), 500
+            return jsonify({'error': f'ffmpeg mix error: {result.stderr[:200]}'}), 500
         # Извлекаем дату из названия кейса (например: from 18-04-2025)
         base_name = os.path.basename(case_path)
         dt_match = re.search(r'from\s+(\d{2})-(\d{2})-(\d{4})', base_name)
@@ -282,10 +352,122 @@ def convert_case():
         else:
             dt = datetime.now()
 
-        return jsonify({
-            'temp_id': final_tmp,
-            'date': dt.strftime("%Y-%m-%d")
-        })
+        return jsonify(_build_temp_asset_response(
+            final_tmp,
+            source_name=base_name,
+            date=dt.strftime("%Y-%m-%d")
+        ))
+
+
+@api.route('/temp_upload_audio', methods=['POST'])
+def temp_upload_audio():
+    files = request.files.getlist('audio_files')
+    if not files:
+        return jsonify({'error': 'files required'}), 400
+
+    uploaded = []
+    for file in files:
+        if not file or not file.filename:
+            continue
+        if not file.filename.lower().endswith('.mp3'):
+            return jsonify({'error': f'Неверный формат файла: {file.filename}'}), 400
+
+        temp_name = f"upload_{uuid.uuid4().hex}.mp3"
+        temp_path = os.path.join(TEMP_MP3_FOLDER, temp_name)
+        file.save(temp_path)
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) < 3000:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            return jsonify({'error': f'Файл слишком короткий или пустой: {file.filename}'}), 400
+
+        uploaded.append(_build_temp_asset_response(temp_path, source_name=file.filename))
+
+    return jsonify({'items': uploaded})
+
+
+@api.route('/render_edit', methods=['POST'])
+def render_edit():
+    payload = request.get_json(silent=True) or {}
+    sources = payload.get('sources') or []
+    if not sources:
+        return jsonify({'error': 'sources required'}), 400
+
+    job_dir = tempfile.mkdtemp(prefix='cwaa_edit_', dir=TEMP_MP3_FOLDER)
+    concat_manifest = os.path.join(job_dir, 'concat.txt')
+    segment_files = []
+    try:
+        with FFMPEG_SEMAPHORE:
+            for index, source in enumerate(sources):
+                temp_id = source.get('temp_id')
+                source_name = source.get('name') or f'Источник {index + 1}'
+                if not temp_id or not os.path.exists(temp_id):
+                    return jsonify({'error': f'Временный файл не найден: {source_name}'}), 400
+
+                duration = _run_ffprobe(temp_id)
+                segments = _normalize_segments(
+                    duration,
+                    source.get('trim_start', 0),
+                    source.get('trim_end', duration),
+                    source.get('cut_start'),
+                    source.get('cut_end'),
+                    source.get('mode', 'trim')
+                )
+                if not segments:
+                    continue
+
+                for seg_index, (start, end) in enumerate(segments):
+                    segment_path = os.path.join(job_dir, f'segment_{index}_{seg_index}.mp3')
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-ss', f'{start:.3f}',
+                        '-to', f'{end:.3f}',
+                        '-i', temp_id,
+                        '-ac', '1',
+                        '-ar', '16000',
+                        '-q:a', '2',
+                        segment_path
+                    ]
+                    result = _run_ffmpeg(cmd)
+                    if result.returncode != 0:
+                        return jsonify({'error': f'Ошибка ffmpeg при обработке "{source_name}": {result.stderr[:200]}'}), 500
+                    segment_files.append(segment_path)
+
+            if not segment_files:
+                return jsonify({'error': 'После обрезки не осталось аудио'}), 400
+
+            with open(concat_manifest, 'w', encoding='utf-8') as f:
+                for segment_path in segment_files:
+                    escaped = segment_path.replace("'", "'\\''")
+                    f.write(f"file '{escaped}'\n")
+
+            final_path = os.path.join(TEMP_MP3_FOLDER, f'edited_{uuid.uuid4().hex}.mp3')
+            concat_cmd = [
+                'ffmpeg', '-y',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_manifest,
+                '-c', 'copy',
+                final_path
+            ]
+            concat_result = _run_ffmpeg(concat_cmd)
+            if concat_result.returncode != 0:
+                concat_cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat',
+                    '-safe', '0',
+                    '-i', concat_manifest,
+                    '-ac', '1',
+                    '-ar', '16000',
+                    '-q:a', '2',
+                    final_path
+                ]
+                concat_result = _run_ffmpeg(concat_cmd)
+                if concat_result.returncode != 0:
+                    return jsonify({'error': f'Ошибка ffmpeg при склейке: {concat_result.stderr[:200]}'}), 500
+
+        return jsonify(_build_temp_asset_response(final_path, source_name='edited.mp3'))
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 
 # Используем отдельный эндпоинт для временных файлов, чтобы не конфликтовать
@@ -326,29 +508,28 @@ def export_text(record_id):
             r'\deflang1049'
             r'{\f0\fs24\n' + rtf_body + '\n}}'
         )
-    session = Session()
-    record = session.query(AudioRecord).get(record_id)
-    session.close()
+    with Session() as session:
+        record = session.get(AudioRecord, record_id)
     if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
         return "Протокол не найден или отсутствует текст", 404
     phrases = parse_transcript_file(record.recognized_text_path)
     rtf_text = phrases_to_rtf(phrases)
-    filename = f"transcript_{uuid.uuid4().hex}.rtf"
-    temp_path = os.path.join(TEMP_MP3_FOLDER, filename)
-    with open(temp_path, 'w', encoding='cp1251') as f:
-        f.write(rtf_text)
+    payload = io.BytesIO(rtf_text.encode('cp1251', errors='ignore'))
+    payload.seek(0)
     return send_file(
-        temp_path,
+        payload,
         as_attachment=True,
+        mimetype='application/rtf',
         download_name=f"{record.case_number}_{record.audio_date.strftime('%Y-%m-%d_%H-%M')}.rtf"
     )
 
 
 @api.route('/add_replacement_rule', methods=['POST'])
 def add_replacement_rule():
-    from_text = request.json.get('from')
-    to_text = request.json.get('to')
-    record_id = request.json.get('record_id')
+    payload = request.get_json(silent=True) or {}
+    from_text = payload.get('from')
+    to_text = payload.get('to')
+    record_id = payload.get('record_id')
     if not from_text or not to_text or not record_id:
         return jsonify({'error': 'Неверные данные'}), 400
     path = os.path.join('assets', 'phraseReplacement.txt')
@@ -373,7 +554,7 @@ def add_replacement_rule():
         with open(path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
     session = Session()
-    record = session.query(AudioRecord).get(record_id)
+    record = session.get(AudioRecord, int(record_id))
     if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
         session.close()
         return jsonify({'error': 'Запись не найдена'}), 404
@@ -390,13 +571,14 @@ def add_replacement_rule():
 
 @api.route('/undo_replacement', methods=['POST'])
 def undo_replacement():
-    record_id = request.json.get('record_id')
-    old_text = request.json.get('original')
-    rule_num = request.json.get('rule')
+    payload = request.get_json(silent=True) or {}
+    record_id = payload.get('record_id')
+    old_text = payload.get('original')
+    rule_num = payload.get('rule')
     if not record_id or not old_text or not rule_num:
         return jsonify({'error': 'Недостаточно данных'}), 400
     session = Session()
-    record = session.query(AudioRecord).get(record_id)
+    record = session.get(AudioRecord, int(record_id))
     if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
         session.close()
         return jsonify({'error': 'Файл не найден'}), 404
@@ -419,10 +601,10 @@ def undo_replacement():
 
 @api.route('/reapply_rules', methods=['POST'])
 def reapply_rules():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     record_id = data.get('record_id')
     session = Session()
-    record = session.query(AudioRecord).get(record_id)
+    record = session.get(AudioRecord, int(record_id))
     if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
         session.close()
         return jsonify({'error': 'Запись не найдена'}), 404

@@ -1,5 +1,4 @@
-<!DOCTYPE html>
-
+﻿<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
@@ -67,8 +66,7 @@
 
       <div class="form-check mb-0">
         <input class="form-check-input" id="recognize_text" name="recognize_text" type="checkbox">
-        <label class="form-check-label" for="recognize_text">Перевести аудио в текст (Не работает для закрытых
-          с.з.).</label>
+        <label class="form-check-label" for="recognize_text">Перевести аудио в текст (не работает для закрытых с.з.).</label>
       </div>
       <div class="mb-2">
         <small class="text-muted" id="vrQueueInfo">Протоколов в очереди: ?</small>
@@ -80,41 +78,44 @@
       </div>
 
       <div class="mb-2">
-        <label class="form-label d-block">Прикрепить запись заседания с компьютера ИЛИ из Фемиды:</label>
-        <div class="d-flex align-items-center gap-3 flex-wrap">
-          <!-- Левая часть — локальный MP3 -->
-          <div class="d-flex align-items-center gap-2 flex-fill">
-            <input accept=".mp3" class="form-control" id="audio_file" name="audio_file" required type="file">
-          </div>
-
-          <!-- Правая часть — кнопка Фемиды -->
-          <div class="d-flex align-items-center gap-2">
-            <button class="btn btn-outline-primary" id="import-from-femida" type="button">
-              <i class="bi bi-cloud-arrow-down"></i> Прикрепить из Фемилы
-            </button>
-          </div>
+        <label class="form-label d-block">Прикрепить аудиоисточники:</label>
+        <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+          <button class="btn btn-outline-primary" id="select-audio-files" type="button">
+            <i class="bi bi-file-earmark-music"></i> Добавить MP3
+          </button>
+          <button class="btn btn-outline-primary" id="import-from-femida" type="button">
+            <i class="bi bi-cloud-arrow-down"></i> Прикрепить из Фемиды
+          </button>
+          <input accept=".mp3" class="d-none" id="audio_file" name="audio_file" multiple type="file">
         </div>
 
-        <!-- Подпись под формой -->
-        <div class="mt-1 small text-muted">
+        <div class="small text-muted mb-2">
           <i class="bi bi-clipboard-check me-1"></i>
-          Можно скопировать файл в проводнике и прикрепить сюда через Ctrl+V.
+          Можно выбрать несколько MP3, вставить аудио через Ctrl+V или перетащить файлы на страницу.
         </div>
 
-        <!-- Метка успешного импорта -->
+        <div class="audio-sources-empty small text-muted" id="audio-sources-empty">
+          Источники еще не добавлены.
+        </div>
+        <div class="audio-sources-list mb-2" id="audio-sources-list"></div>
+
         <div class="mt-1">
           <span class="text-success small" id="imported-label"></span>
         </div>
       </div>
+
       <div class="mt-2">
         <input id="imported_temp_id" name="imported_temp_id" type="hidden">
+        <input id="final_temp_id" name="final_temp_id" type="hidden">
         <button class="btn btn-primary" type="submit">
           <i class="bi bi-cloud-upload"></i> Подтвердить и сохранить на сервере
         </button>
       </div>
+
       <div class="upload-spinner">
         <div class="spinner-border text-primary" style="width: 5rem; height: 5rem;"></div>
       </div>
+
       <div class="mt-2" id="upload-alert-container">
         {% if error %}
         <div class="alert alert-danger" role="alert">
@@ -127,7 +128,7 @@
           <strong>Файл успешно загружен!</strong><br>
           Прямая ссылка на файл:
           <span id="file-link">{{ success }}</span>
-          <button id="copy-path-btn" class="btn btn-secondary btn-sm ml-2">Копировать путь</button>
+          <button class="btn btn-secondary btn-sm ml-2" id="copy-path-btn">Копировать путь</button>
         </div>
         {% endif %}
       </div>
@@ -135,7 +136,7 @@
   </div>
 
   <div id="drop-overlay">
-    <div id="drop-text">Отпустите файл здесь, чтобы прикрепить его к загрузке</div>
+    <div id="drop-text">Отпустите MP3-файлы здесь, чтобы добавить их в список источников</div>
   </div>
 
   <div class="modal fade" id="femidaModal" tabindex="-1">
@@ -150,10 +151,10 @@
             <strong>Инструкция:</strong>
             <ol class="mb-0 ps-3">
               <li>Выберите нужный зал</li>
-              <li>Нажмите на нужную запись в списке (список идет от новых к старым)</li>
+              <li>Нажмите на нужную запись в списке</li>
               <li>Нажмите «Конвертировать в MP3» и дождитесь появления плеера</li>
-              <li><b>Проверьте качество записи путем частичного прослушивания</b></li>
-              <li>Удостоверившись в надлежащем качестве, нажмите «Подтвердить и прикрепить»</li>
+              <li><b>Проверьте качество записи частичным прослушиванием</b></li>
+              <li>Нажмите «Подтвердить и прикрепить»</li>
             </ol>
           </div>
           <select class="form-select mb-2" id="femida-courtroom">
@@ -179,54 +180,925 @@
       </div>
     </div>
   </div>
+
+  <div class="modal fade" id="audioEditorModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-centered audio-editor-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Редактор аудиоисточника</h5>
+          <button class="btn-close" data-bs-dismiss="modal" type="button"></button>
+        </div>
+        <div class="modal-body">
+          <div class="audio-editor" id="audio-editor">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+              <div>
+                <div class="fw-semibold" id="editor-source-name"></div>
+                <div class="small text-muted" id="editor-source-duration"></div>
+              </div>
+              <button class="btn btn-sm btn-outline-secondary" id="reset-editor-source" type="button">
+                <i class="bi bi-arrow-counterclockwise"></i> Сбросить правки
+              </button>
+            </div>
+
+            <div class="editor-mode-switch mb-3">
+              <button class="btn btn-sm btn-primary" data-mode="trim" type="button">Обрезка краев</button>
+              <button class="btn btn-sm btn-outline-primary" data-mode="cut" type="button">Вырезать фрагмент</button>
+            </div>
+
+            <audio id="editor-audio" preload="metadata"></audio>
+
+            <div class="editor-timeline mb-3" id="editor-timeline">
+              <canvas id="editor-waveform"></canvas>
+              <div class="editor-track"></div>
+              <div class="editor-selection" id="editor-selection"></div>
+              <div class="editor-cut-region" id="editor-cut-region"></div>
+              <div class="editor-playhead" id="editor-playhead"></div>
+            </div>
+
+            <div class="editor-player-controls mb-3">
+              <div class="editor-main-controls">
+                <button class="btn btn-primary" id="editor-play-toggle" type="button">
+                  <i class="bi bi-play-fill"></i> Воспроизвести
+                </button>
+                <button class="btn btn-outline-secondary" id="editor-jump-start" type="button">
+                  <i class="bi bi-skip-start-fill"></i> К началу фрагмента
+                </button>
+                <div class="editor-time-readout">
+                  <span id="editor-current-time">0:00.0</span>
+                  <span class="text-muted">/</span>
+                  <span id="editor-active-range">0:00.0 - 0:00.0</span>
+                </div>
+              </div>
+              <div class="editor-secondary-controls">
+                <label class="editor-inline-control" for="editor-volume-range">
+                  <span>Громкость</span>
+                  <input class="form-range" id="editor-volume-range" max="200" min="0" step="5" type="range" value="100">
+                  <span class="editor-inline-value" id="editor-volume-value">100%</span>
+                </label>
+                <label class="editor-inline-control editor-speed-control" for="editor-speed-select">
+                  <span>Скорость</span>
+                  <select class="form-select form-select-sm" id="editor-speed-select">
+                    <option value="0.75">0.75x</option>
+                    <option selected value="1">1.0x</option>
+                    <option value="1.25">1.25x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="1.75">1.75x</option>
+                    <option value="2">2.0x</option>
+                    <option value="2.5">2.5x</option>
+                    <option value="3">3.0x</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="row g-2 mb-2" id="trim-controls">
+              <div class="col-6">
+                <label class="form-label small mb-1" for="trim-start-range">Начало</label>
+                <input class="form-range" id="trim-start-range" min="0" step="0.1" type="range">
+                <input class="form-control form-control-sm" id="trim-start-input" step="0.1" type="number">
+              </div>
+              <div class="col-6">
+                <label class="form-label small mb-1" for="trim-end-range">Конец</label>
+                <input class="form-range" id="trim-end-range" min="0" step="0.1" type="range">
+                <input class="form-control form-control-sm" id="trim-end-input" step="0.1" type="number">
+              </div>
+            </div>
+
+            <div id="cut-controls" style="display:none;">
+              <div class="row g-2 mb-2">
+                <div class="col-6">
+                  <label class="form-label small mb-1" for="first-segment-start-range">Начало первого сегмента</label>
+                  <input class="form-range" id="first-segment-start-range" min="0" step="0.1" type="range">
+                  <input class="form-control form-control-sm" id="first-segment-start-input" step="0.1" type="number">
+                </div>
+                <div class="col-6">
+                  <label class="form-label small mb-1" for="first-segment-end-range">Конец первого сегмента</label>
+                  <input class="form-range" id="first-segment-end-range" min="0" step="0.1" type="range">
+                  <input class="form-control form-control-sm" id="first-segment-end-input" step="0.1" type="number">
+                </div>
+              </div>
+              <div class="row g-2">
+                <div class="col-6">
+                  <label class="form-label small mb-1" for="second-segment-start-range">Начало второго сегмента</label>
+                  <input class="form-range" id="second-segment-start-range" min="0" step="0.1" type="range">
+                  <input class="form-control form-control-sm" id="second-segment-start-input" step="0.1" type="number">
+                </div>
+                <div class="col-6">
+                  <label class="form-label small mb-1" for="second-segment-end-range">Конец второго сегмента</label>
+                  <input class="form-range" id="second-segment-end-range" min="0" step="0.1" type="range">
+                  <input class="form-control form-control-sm" id="second-segment-end-input" step="0.1" type="number">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="position-fixed bottom-0 start-0 p-3" style="z-index: 9999">
     <div id="copyToastContainer"></div>
   </div>
   <script>
     let formChanged = false;
+
     $(function () {
       const dropOverlay = $('#drop-overlay');
       const audioInput = $('#audio_file');
+      const form = $('form');
+      const sources = [];
+      const audioEditorModal = new bootstrap.Modal(document.getElementById('audioEditorModal'));
+      const editorAudio = $('#editor-audio')[0];
+      const editorTimeline = $('#editor-timeline');
+      const editorWaveform = document.getElementById('editor-waveform');
+      const audioContext = window.AudioContext || window.webkitAudioContext ? new (window.AudioContext || window.webkitAudioContext)() : null;
+      const waveformCache = new Map();
+      let mediaElementSource = null;
+      let gainNode = null;
       let selectedPath = null;
-      let convertedFile = null;
-      let convertedDate = null;
+      let convertedAsset = null;
+      let selectedSourceId = null;
+      let dragSourceId = null;
+      let sortingSources = false;
+      let playbackAnimationFrame = null;
 
-      // Drag'n'drop
+      function clamp(value, min, max) {
+        return Math.min(Math.max(value, min), max);
+      }
+
+      function formatSeconds(value) {
+        const total = Math.max(0, Math.round(Number(value || 0) * 10) / 10);
+        const minutes = Math.floor(total / 60);
+        const seconds = (total % 60).toFixed(1).padStart(4, '0');
+        return `${minutes}:${seconds}`;
+      }
+
+      function markFormChanged() {
+        formChanged = true;
+      }
+
+      function getTodayIsoDate() {
+        return new Date().toISOString().split('T')[0];
+      }
+
+      function validateAudioDate() {
+        const audioDateInput = $('#audio_date');
+        const selectedDate = audioDateInput.val();
+        const today = getTodayIsoDate();
+
+        audioDateInput.attr('max', today);
+
+        if (!selectedDate) {
+          audioDateInput[0].setCustomValidity('');
+          return true;
+        }
+
+        if (selectedDate > today) {
+          audioDateInput[0].setCustomValidity('Дата проведения не может быть из будущего.');
+          audioDateInput[0].reportValidity();
+          return false;
+        }
+
+        audioDateInput[0].setCustomValidity('');
+        return true;
+      }
+
+      function ensureAudioGraph() {
+        if (!audioContext || gainNode) return;
+        mediaElementSource = audioContext.createMediaElementSource(editorAudio);
+        gainNode = audioContext.createGain();
+        gainNode.gain.value = 1;
+        mediaElementSource.connect(gainNode).connect(audioContext.destination);
+        editorAudio.volume = 1;
+      }
+
+      async function ensureAudioContextRunning() {
+        if (!audioContext) return;
+        ensureAudioGraph();
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+      }
+
+      function getSource(sourceId) {
+        return sources.find(item => item.id === sourceId) || null;
+      }
+
+      function createSource(asset) {
+        const duration = Number(asset.duration || 0);
+        return {
+          id: `src_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+          temp_id: asset.temp_id,
+          temp_url: asset.temp_url,
+          name: asset.name,
+          duration,
+          mode: 'trim',
+          trim_start: 0,
+          trim_end: duration,
+          cut_start: Math.min(duration, duration / 3),
+          cut_end: Math.min(duration, duration * 2 / 3)
+        };
+      }
+
+      function summarizeSource(source) {
+        const trimText = `${formatSeconds(source.trim_start)} - ${formatSeconds(source.trim_end)}`;
+        if (source.mode === 'cut') {
+          return `Сохраняется диапазон ${trimText}, вырезается ${formatSeconds(source.cut_start)} - ${formatSeconds(source.cut_end)}`;
+        }
+        return `Сохраняется диапазон ${trimText}`;
+      }
+
+      function getPlayableSegments(source) {
+        if (!source) return [];
+        const trimStart = clamp(source.trim_start, 0, source.duration);
+        const trimEnd = clamp(source.trim_end, trimStart, source.duration);
+        if (source.mode !== 'cut') {
+          return trimEnd > trimStart ? [{ start: trimStart, end: trimEnd }] : [];
+        }
+        const cutStart = clamp(source.cut_start, trimStart, trimEnd);
+        const cutEnd = clamp(source.cut_end, cutStart, trimEnd);
+        const segments = [];
+        if (cutStart > trimStart) {
+          segments.push({ start: trimStart, end: cutStart });
+        }
+        if (cutEnd < trimEnd) {
+          segments.push({ start: cutEnd, end: trimEnd });
+        }
+        return segments;
+      }
+
+      function getActiveRangeLabel(source) {
+        const segments = getPlayableSegments(source);
+        if (!segments.length) return '0:00.0 - 0:00.0';
+        return `${formatSeconds(segments[0].start)} - ${formatSeconds(segments[segments.length - 1].end)}`;
+      }
+
+      function getSegmentIndexForTime(time, segments) {
+        return segments.findIndex(segment => time >= segment.start && time < segment.end - 0.02);
+      }
+
+      function snapTimeToPlayable(time, source) {
+        const segments = getPlayableSegments(source);
+        if (!segments.length) return 0;
+        for (const segment of segments) {
+          if (time < segment.start) return segment.start;
+          if (time >= segment.start && time <= segment.end) return time;
+        }
+        return segments[segments.length - 1].end;
+      }
+
+      function updatePlayButton() {
+        const isPlaying = !editorAudio.paused && !editorAudio.ended;
+        $('#editor-play-toggle').html(isPlaying
+          ? '<i class="bi bi-pause-fill"></i> Пауза'
+          : '<i class="bi bi-play-fill"></i> Воспроизвести');
+      }
+
+      function stopPlaybackAnimation() {
+        if (playbackAnimationFrame !== null) {
+          cancelAnimationFrame(playbackAnimationFrame);
+          playbackAnimationFrame = null;
+        }
+      }
+
+      function startPlaybackAnimation() {
+        stopPlaybackAnimation();
+        const tick = function () {
+          updatePlaybackUI();
+          if (!editorAudio.paused && !editorAudio.ended) {
+            playbackAnimationFrame = requestAnimationFrame(tick);
+          } else {
+            playbackAnimationFrame = null;
+          }
+        };
+        playbackAnimationFrame = requestAnimationFrame(tick);
+      }
+
+      function updatePlaybackUI() {
+        const source = getSource(selectedSourceId);
+        const duration = source?.duration || 0;
+        const currentTime = duration ? clamp(editorAudio.currentTime || 0, 0, duration) : 0;
+        $('#editor-current-time').text(formatSeconds(currentTime));
+        const playheadLeft = duration ? (currentTime / duration) * 100 : 0;
+        $('#editor-playhead').css('left', `${playheadLeft}%`);
+        updatePlayButton();
+      }
+
+      function drawWaveform(source) {
+        const canvas = editorWaveform;
+        if (!canvas) return;
+        const width = Math.max(editorTimeline.innerWidth(), 200);
+        const height = Math.max(editorTimeline.innerHeight(), 70);
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(width * ratio);
+        canvas.height = Math.floor(height * ratio);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+
+        const peaks = source?.waveformPeaks || [];
+        if (!peaks.length) return;
+
+        const middle = height / 2;
+        const barWidth = Math.max(width / peaks.length, 1);
+        ctx.fillStyle = 'rgba(0, 240, 255, 0.9)';
+        peaks.forEach((peak, index) => {
+          const x = index * barWidth;
+          const barHeight = Math.max(2, peak * (height * 0.45));
+          ctx.fillRect(x, middle - barHeight / 2, Math.max(1, barWidth - 1), barHeight);
+        });
+      }
+
+      async function ensureWaveformData(source) {
+        if (!source || source.waveformPeaks || !audioContext) {
+          drawWaveform(source);
+          return;
+        }
+        if (waveformCache.has(source.temp_id)) {
+          source.waveformPeaks = waveformCache.get(source.temp_id);
+          drawWaveform(source);
+          return;
+        }
+        try {
+          if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+          }
+          const response = await fetch(source.temp_url);
+          const arrayBuffer = await response.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+          const samples = 400;
+          const channel = audioBuffer.getChannelData(0);
+          const blockSize = Math.max(1, Math.floor(channel.length / samples));
+          const peaks = [];
+          for (let i = 0; i < samples; i++) {
+            const start = i * blockSize;
+            const end = Math.min(start + blockSize, channel.length);
+            let peak = 0;
+            for (let j = start; j < end; j++) {
+              const value = Math.abs(channel[j]);
+              if (value > peak) peak = value;
+            }
+            peaks.push(peak);
+          }
+          source.waveformPeaks = peaks;
+          waveformCache.set(source.temp_id, peaks);
+          drawWaveform(source);
+        } catch (error) {
+          source.waveformPeaks = [];
+          drawWaveform(source);
+        }
+      }
+
+      function renderSourceList() {
+        const list = $('#audio-sources-list').empty();
+        $('#audio-sources-empty').toggle(sources.length === 0);
+
+        sources.forEach((source, index) => {
+          const activeClass = source.id === selectedSourceId ? 'active' : '';
+          const item = $(`
+            <div class="audio-source-item ${activeClass}" draggable="true" data-id="${source.id}">
+              <div class="audio-source-handle" title="Перетащите для изменения порядка"><i class="bi bi-list"></i></div>
+              <div class="audio-source-meta">
+                <div class="audio-source-title">${index + 1}. ${source.name}</div>
+                <div class="audio-source-summary">${summarizeSource(source)}</div>
+              </div>
+              <div class="audio-source-actions">
+                <span class="badge text-bg-light">${formatSeconds(source.duration)}</span>
+                <button class="btn btn-sm btn-outline-secondary select-source" type="button">Редактировать</button>
+                <button class="btn btn-sm btn-outline-danger remove-source" type="button">Удалить</button>
+              </div>
+            </div>
+          `);
+          list.append(item);
+        });
+      }
+
+      function updateTimeline(source) {
+        if (!source || !source.duration) {
+          $('#editor-selection').css({ left: '0%', width: '0%' });
+          $('#editor-cut-region').hide();
+          $('#editor-active-range').text('0:00.0 - 0:00.0');
+          drawWaveform(null);
+          return;
+        }
+        const trimLeft = (source.trim_start / source.duration) * 100;
+        const trimWidth = ((source.trim_end - source.trim_start) / source.duration) * 100;
+        $('#editor-selection').css({ left: `${trimLeft}%`, width: `${trimWidth}%` });
+
+        if (source.mode === 'cut' && source.cut_end > source.cut_start) {
+          const cutLeft = (source.cut_start / source.duration) * 100;
+          const cutWidth = ((source.cut_end - source.cut_start) / source.duration) * 100;
+          $('#editor-cut-region').css({ left: `${cutLeft}%`, width: `${cutWidth}%` }).show();
+        } else {
+          $('#editor-cut-region').hide();
+        }
+        $('#editor-active-range').text(getActiveRangeLabel(source));
+        drawWaveform(source);
+        updatePlaybackUI();
+      }
+
+      async function syncEditorFromSource() {
+        const source = getSource(selectedSourceId);
+        if (!source) {
+          editorAudio.pause();
+          editorAudio.removeAttribute('src');
+          editorAudio.load();
+          $('#editor-current-time').text('0:00.0');
+          $('#editor-active-range').text('0:00.0 - 0:00.0');
+          $('#editor-playhead').css('left', '0%');
+          updatePlayButton();
+          drawWaveform(null);
+          return;
+        }
+
+        $('#editor-source-name').text(source.name);
+        $('#editor-source-duration').text(`Длительность: ${formatSeconds(source.duration)}`);
+        const gainPercent = Math.round((gainNode?.gain.value ?? 1) * 100);
+        $('#editor-volume-range').val(gainPercent);
+        $('#editor-volume-value').text(`${gainPercent}%`);
+        $('#editor-speed-select').val(String(editorAudio.playbackRate));
+        if (editorAudio.src !== new URL(source.temp_url, window.location.origin).href) {
+          editorAudio.pause();
+          editorAudio.src = source.temp_url;
+          editorAudio.load();
+        }
+
+        [
+          'trim-start-range',
+          'trim-end-range',
+          'first-segment-start-range',
+          'first-segment-end-range',
+          'second-segment-start-range',
+          'second-segment-end-range'
+        ].forEach(id => {
+          $(`#${id}`).attr('max', source.duration.toFixed(1));
+        });
+
+        $('#trim-start-range').val(source.trim_start);
+        $('#trim-end-range').val(source.trim_end);
+        $('#trim-start-input').val(source.trim_start.toFixed(1));
+        $('#trim-end-input').val(source.trim_end.toFixed(1));
+        $('#first-segment-start-range').val(source.trim_start);
+        $('#first-segment-end-range').val(source.cut_start);
+        $('#second-segment-start-range').val(source.cut_end);
+        $('#second-segment-end-range').val(source.trim_end);
+        $('#first-segment-start-input').val(source.trim_start.toFixed(1));
+        $('#first-segment-end-input').val(source.cut_start.toFixed(1));
+        $('#second-segment-start-input').val(source.cut_end.toFixed(1));
+        $('#second-segment-end-input').val(source.trim_end.toFixed(1));
+
+        $('.editor-mode-switch button').each(function () {
+          const isActive = $(this).data('mode') === source.mode;
+          $(this).toggleClass('btn-primary', isActive).toggleClass('btn-outline-primary', !isActive);
+        });
+        $('#trim-controls').toggle(source.mode === 'trim');
+        $('#cut-controls').toggle(source.mode === 'cut');
+
+        updateTimeline(source);
+        renderSourceList();
+        await ensureWaveformData(source);
+      }
+
+      function applyEditorValues() {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+
+        let trimStart = Number($('#trim-start-input').val());
+        let trimEnd = Number($('#trim-end-input').val());
+        trimStart = clamp(isNaN(trimStart) ? 0 : trimStart, 0, source.duration);
+        trimEnd = clamp(isNaN(trimEnd) ? source.duration : trimEnd, trimStart, source.duration);
+
+        if (source.mode === 'cut') {
+          let firstStart = Number($('#first-segment-start-input').val());
+          let firstEnd = Number($('#first-segment-end-input').val());
+          let secondStart = Number($('#second-segment-start-input').val());
+          let secondEnd = Number($('#second-segment-end-input').val());
+          firstStart = clamp(isNaN(firstStart) ? source.trim_start : firstStart, 0, source.duration);
+          firstEnd = clamp(isNaN(firstEnd) ? source.cut_start : firstEnd, firstStart, source.duration);
+          secondStart = clamp(isNaN(secondStart) ? source.cut_end : secondStart, firstEnd, source.duration);
+          secondEnd = clamp(isNaN(secondEnd) ? source.trim_end : secondEnd, secondStart, source.duration);
+          source.trim_start = firstStart;
+          source.cut_start = firstEnd;
+          source.cut_end = secondStart;
+          source.trim_end = secondEnd;
+        } else {
+          source.trim_start = trimStart;
+          source.trim_end = trimEnd;
+          source.cut_start = clamp(source.cut_start, trimStart, trimEnd);
+          source.cut_end = clamp(source.cut_end, source.cut_start, trimEnd);
+        }
+
+        $('#trim-start-range').val(source.trim_start);
+        $('#trim-end-range').val(source.trim_end);
+        $('#trim-start-input').val(source.trim_start.toFixed(1));
+        $('#trim-end-input').val(source.trim_end.toFixed(1));
+        $('#first-segment-start-range').val(source.trim_start);
+        $('#first-segment-end-range').val(source.cut_start);
+        $('#second-segment-start-range').val(source.cut_end);
+        $('#second-segment-end-range').val(source.trim_end);
+        $('#first-segment-start-input').val(source.trim_start.toFixed(1));
+        $('#first-segment-end-input').val(source.cut_start.toFixed(1));
+        $('#second-segment-start-input').val(source.cut_end.toFixed(1));
+        $('#second-segment-end-input').val(source.trim_end.toFixed(1));
+
+        updateTimeline(source);
+        renderSourceList();
+        editorAudio.currentTime = snapTimeToPlayable(editorAudio.currentTime || 0, source);
+        updatePlaybackUI();
+        $('#final_temp_id').val('');
+        markFormChanged();
+      }
+
+      function selectSource(sourceId) {
+        selectedSourceId = sourceId;
+        syncEditorFromSource();
+        audioEditorModal.show();
+      }
+
+      function addSources(items) {
+        items.forEach(item => sources.push(createSource(item)));
+        if (items.length) {
+          selectedSourceId = sources[sources.length - items.length].id;
+          renderSourceList();
+          syncEditorFromSource();
+          $('#imported-label').text(`Добавлено источников: ${sources.length}`);
+          $('#final_temp_id').val('');
+          markFormChanged();
+        }
+      }
+
+      function clearSources() {
+        sources.splice(0, sources.length);
+        selectedSourceId = null;
+        editorAudio.pause();
+        editorAudio.removeAttribute('src');
+        editorAudio.load();
+        stopPlaybackAnimation();
+        $('#final_temp_id').val('');
+        $('#imported_temp_id').val('');
+        $('#imported-label').text('');
+        audioEditorModal.hide();
+        renderSourceList();
+      }
+
+      function seekEditorTo(time) {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        editorAudio.currentTime = snapTimeToPlayable(time, source);
+        updatePlaybackUI();
+      }
+
+      function toggleEditorPlayback() {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        const segments = getPlayableSegments(source);
+        if (!segments.length) return;
+
+        if (editorAudio.paused || editorAudio.ended) {
+          ensureAudioContextRunning().then(function () {
+            editorAudio.currentTime = snapTimeToPlayable(editorAudio.currentTime || segments[0].start, source);
+            editorAudio.play();
+          }).catch(function () {
+            editorAudio.currentTime = snapTimeToPlayable(editorAudio.currentTime || segments[0].start, source);
+            editorAudio.play();
+          });
+        } else {
+          editorAudio.pause();
+        }
+        updatePlayButton();
+      }
+
+      function uploadLocalFiles(files) {
+        const mp3Files = Array.from(files || []).filter(file => file.type === 'audio/mpeg' || file.name.toLowerCase().endsWith('.mp3'));
+        if (!mp3Files.length) {
+          alert('Пожалуйста, выберите MP3-файлы.');
+          return;
+        }
+        const data = new FormData();
+        mp3Files.forEach(file => data.append('audio_files', file));
+
+        $.ajax({
+          url: '/api/temp_upload_audio',
+          method: 'POST',
+          data,
+          processData: false,
+          contentType: false,
+          success: function (response) {
+            addSources(response.items || []);
+            audioInput.val('');
+          },
+          error: function (xhr) {
+            alert(xhr.responseJSON?.error || 'Ошибка при загрузке временных аудиофайлов');
+          }
+        });
+      }
+
+      function renderFinalAudio(callback) {
+        const payload = {
+          sources: sources.map(source => ({
+            temp_id: source.temp_id,
+            name: source.name,
+            mode: source.mode,
+            trim_start: source.trim_start,
+            trim_end: source.trim_end,
+            cut_start: source.cut_start,
+            cut_end: source.cut_end
+          }))
+        };
+
+        $.ajax({
+          url: '/api/render_edit',
+          method: 'POST',
+          data: JSON.stringify(payload),
+          contentType: 'application/json',
+          success: function (response) {
+            $('#final_temp_id').val(response.temp_id);
+            callback();
+          },
+          error: function (xhr) {
+            const msg = xhr.responseJSON?.error || 'Не удалось собрать итоговый аудиофайл';
+            $('#upload-alert-container').html(`
+              <div class="alert alert-danger d-flex align-items-center" role="alert">
+                <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
+                <div>${msg}</div>
+              </div>
+            `);
+            form.removeClass('uploading');
+            form.find('button[type="submit"]').prop('disabled', false);
+          }
+        });
+      }
+
+      function updateVRQueueInfo() {
+        fetch('/api/get_vr_queue_len')
+          .then(res => res.json())
+          .then(data => $('#vrQueueInfo').text(`Протоколов в очереди: ${data.records_to_vr}`))
+          .catch(() => $('#vrQueueInfo').text('Протоколов в очереди: ошибка загрузки'));
+      }
+
+      $('#audio_date').attr('max', getTodayIsoDate());
+      $('#audio_date').on('change input', validateAudioDate);
+
+      updateVRQueueInfo();
+      renderSourceList();
+
+      editorAudio.addEventListener('timeupdate', function () {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        const segments = getPlayableSegments(source);
+        if (!segments.length) {
+          editorAudio.pause();
+          updatePlaybackUI();
+          return;
+        }
+
+        let segmentIndex = getSegmentIndexForTime(editorAudio.currentTime, segments);
+        if (segmentIndex === -1) {
+          if (editorAudio.currentTime < segments[0].start) {
+            editorAudio.currentTime = segments[0].start;
+            segmentIndex = 0;
+          } else {
+            const nextIndex = segments.findIndex(segment => editorAudio.currentTime < segment.start);
+            if (nextIndex >= 0) {
+              editorAudio.currentTime = segments[nextIndex].start;
+              segmentIndex = nextIndex;
+            } else {
+              editorAudio.pause();
+              editorAudio.currentTime = segments[segments.length - 1].end;
+              updatePlaybackUI();
+              return;
+            }
+          }
+        }
+
+        if (editorAudio.currentTime >= segments[segmentIndex].end - 0.03) {
+          if (segmentIndex + 1 < segments.length) {
+            editorAudio.currentTime = segments[segmentIndex + 1].start;
+          } else {
+            editorAudio.pause();
+            editorAudio.currentTime = segments[segmentIndex].end;
+          }
+        }
+        updatePlaybackUI();
+      });
+
+      editorAudio.addEventListener('play', function () {
+        updatePlayButton();
+        startPlaybackAnimation();
+      });
+      editorAudio.addEventListener('pause', function () {
+        updatePlayButton();
+        stopPlaybackAnimation();
+      });
+      editorAudio.addEventListener('ended', function () {
+        updatePlayButton();
+        stopPlaybackAnimation();
+      });
+      editorAudio.addEventListener('loadedmetadata', function () {
+        seekEditorTo(getPlayableSegments(getSource(selectedSourceId))[0]?.start || 0);
+      });
+
+      $('#editor-play-toggle').on('click', function () {
+        toggleEditorPlayback();
+      });
+
+      $('#editor-jump-start').on('click', function () {
+        const source = getSource(selectedSourceId);
+        const firstSegment = getPlayableSegments(source)[0];
+        if (!firstSegment) return;
+        seekEditorTo(firstSegment.start);
+      });
+
+      $('#editor-volume-range').on('input change', function () {
+        const volumePercent = Number($(this).val()) || 0;
+        ensureAudioGraph();
+        gainNode.gain.value = clamp(volumePercent / 100, 0, 2);
+        $('#editor-volume-value').text(`${volumePercent}%`);
+      });
+
+      $('#editor-speed-select').on('change', function () {
+        const rate = Number($(this).val()) || 1;
+        editorAudio.playbackRate = rate;
+      });
+
+      editorTimeline.on('click', function (e) {
+        const source = getSource(selectedSourceId);
+        if (!source || !source.duration) return;
+        const rect = this.getBoundingClientRect();
+        const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+        seekEditorTo(source.duration * ratio);
+      });
+
+      $('#audioEditorModal').on('hidden.bs.modal', function () {
+        if (editorAudio) {
+          editorAudio.pause();
+        }
+        stopPlaybackAnimation();
+      });
+
+      $('#audioEditorModal').on('shown.bs.modal', function () {
+        const source = getSource(selectedSourceId);
+        drawWaveform(source);
+        updatePlaybackUI();
+      });
+
+      $(window).on('resize', function () {
+        drawWaveform(getSource(selectedSourceId));
+      });
+
+      $('#select-audio-files').on('click', function () {
+        audioInput.trigger('click');
+      });
+
+      audioInput.on('change', function () {
+        uploadLocalFiles(this.files);
+      });
+
       $(document).on('dragover', function (e) {
+        const types = Array.from(e.originalEvent.dataTransfer?.types || []);
+        if (sortingSources || !types.includes('Files')) return;
         e.preventDefault();
         dropOverlay.show();
       }).on('dragleave', function (e) {
+        const types = Array.from(e.originalEvent.dataTransfer?.types || []);
+        if (sortingSources || !types.includes('Files')) return;
         if (e.originalEvent.relatedTarget === null) {
           dropOverlay.hide();
         }
       }).on('drop', function (e) {
+        const types = Array.from(e.originalEvent.dataTransfer?.types || []);
+        if (sortingSources || !types.includes('Files')) return;
         e.preventDefault();
         dropOverlay.hide();
-        const files = e.originalEvent.dataTransfer.files;
-        if (files.length > 0 && files[0].type === 'audio/mpeg') {
-          const dt = new DataTransfer();
-          dt.items.add(files[0]);
-          audioInput[0].files = dt.files;
-          audioInput.trigger('change');
+        uploadLocalFiles(e.originalEvent.dataTransfer.files);
+      });
+
+      $(document).on('paste', function (e) {
+        const items = e.originalEvent.clipboardData?.items;
+        if (!items) return;
+        const files = [];
+        $.each(items, function (_, item) {
+          if (item.kind === 'file' && item.type === 'audio/mpeg') {
+            const file = item.getAsFile();
+            if (file) files.push(file);
+          }
+        });
+        if (files.length) {
+          uploadLocalFiles(files);
+          showToast('Файлы успешно добавлены из буфера', 'Готово');
         }
       });
 
-      // Валидация формата mp3
-      audioInput.on('change', function () {
-        const file = this.files[0];
-        if (file && file.type !== 'audio/mpeg') {
-          alert('Пожалуйста, выберите файл в формате MP3');
-          this.value = '';
+      $(document).on('click', '.select-source', function () {
+        selectSource($(this).closest('.audio-source-item').data('id'));
+      });
+
+      $(document).on('click', '.remove-source', function () {
+        const sourceId = $(this).closest('.audio-source-item').data('id');
+        const index = sources.findIndex(item => item.id === sourceId);
+        if (index >= 0) {
+          sources.splice(index, 1);
+          if (selectedSourceId === sourceId) {
+            selectedSourceId = sources[0]?.id || null;
+            if (!selectedSourceId) {
+              audioEditorModal.hide();
+            }
+          }
+          renderSourceList();
+          syncEditorFromSource();
+          $('#imported-label').text(sources.length ? `Добавлено источников: ${sources.length}` : '');
+          $('#final_temp_id').val('');
+          markFormChanged();
         }
       });
 
-      // Кнопка "Прикрепить из Фемиды"
+      $(document).on('dragstart', '.audio-source-item', function () {
+        dragSourceId = $(this).data('id');
+        sortingSources = true;
+      });
+
+      $(document).on('dragend', '.audio-source-item', function () {
+        sortingSources = false;
+        $('.audio-source-item').removeClass('drag-over');
+      });
+
+      $(document).on('dragover', '.audio-source-item', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $(this).addClass('drag-over');
+      });
+
+      $(document).on('dragleave', '.audio-source-item', function () {
+        $(this).removeClass('drag-over');
+      });
+
+      $(document).on('drop', '.audio-source-item', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $('.audio-source-item').removeClass('drag-over');
+        const targetId = $(this).data('id');
+        if (!dragSourceId || dragSourceId === targetId) return;
+
+        const sourceIndex = sources.findIndex(item => item.id === dragSourceId);
+        const targetIndex = sources.findIndex(item => item.id === targetId);
+        if (sourceIndex < 0 || targetIndex < 0) return;
+
+        const moved = sources.splice(sourceIndex, 1)[0];
+        sources.splice(targetIndex, 0, moved);
+        sortingSources = false;
+        renderSourceList();
+        syncEditorFromSource();
+        $('#final_temp_id').val('');
+        markFormChanged();
+      });
+
+      $('.editor-mode-switch button').on('click', function () {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        source.mode = $(this).data('mode');
+        if (source.mode === 'cut' && source.cut_end <= source.cut_start) {
+          source.cut_start = source.trim_start + (source.trim_end - source.trim_start) / 3;
+          source.cut_end = source.trim_start + ((source.trim_end - source.trim_start) * 2 / 3);
+        }
+        syncEditorFromSource();
+        markFormChanged();
+      });
+
+      $('#reset-editor-source').on('click', function () {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        source.mode = 'trim';
+        source.trim_start = 0;
+        source.trim_end = source.duration;
+        source.cut_start = source.duration / 3;
+        source.cut_end = source.duration * 2 / 3;
+        syncEditorFromSource();
+        markFormChanged();
+      });
+
+      $('#trim-start-range, #trim-end-range, #first-segment-start-range, #first-segment-end-range, #second-segment-start-range, #second-segment-end-range').on('input', function () {
+        const mappedInput = $(this).attr('id').replace('-range', '-input');
+        $(`#${mappedInput}`).val($(this).val());
+        applyEditorValues();
+      });
+
+      $('#trim-start-input, #trim-end-input, #first-segment-start-input, #first-segment-end-input, #second-segment-start-input, #second-segment-end-input').on('input', function () {
+        const mappedRange = $(this).attr('id').replace('-input', '-range');
+        $(`#${mappedRange}`).val($(this).val());
+        applyEditorValues();
+      });
+
       $('#import-from-femida').on('click', function () {
         $('#femida-courtroom').empty().append('<option value="">Загрузка...</option>');
         $('#femida-records').empty();
+        $('#femida-filter').val('');
         $('#femida-preview').hide();
         $('#femida-audio').attr('src', '');
         $('#confirm-femida-import').prop('disabled', true);
+        selectedPath = null;
+        convertedAsset = null;
         $('#femidaModal').modal('show');
 
         $.getJSON('/api/import_sources', function (data) {
@@ -243,7 +1115,7 @@
         if (!path) return;
         list.append('<div class="text-muted px-2 py-1">Загрузка списка записей...</div>');
         $.getJSON('/api/import_cases', { path }, function (entries) {
-          list.empty(); // очистим перед выводом
+          list.empty();
           if (!entries.length) {
             list.append('<div class="text-muted px-2 py-1">Нет записей</div>');
           } else {
@@ -267,26 +1139,21 @@
         selectedPath = $(this).data('path');
         $('#confirm-femida-import').prop('disabled', true);
         $('#femida-preview').hide();
-        convertedFile = null;
+        convertedAsset = null;
       });
 
       $('#convert-femida').on('click', function () {
         if (!selectedPath) return;
-        $('body').append('<div id="loading-overlay">⏳ Обработка...</div>');
+        $('body').append('<div id="loading-overlay">Обработка...</div>');
         $.post('/api/convert_case', { path: selectedPath }, function (response) {
           $('#loading-overlay').remove();
-          $('#audio_file').prop('disabled', true);
-          // Путь для предпросмотра временного файла должен совпадать с новым
-          // маршрутом /temp_audio, иначе запрос перехватывается обработчиком
-          // /audio/<path:filename> и возвращает 404
-          $('#femida-audio').attr('src', '/api/temp_audio/' + encodeURIComponent(response.temp_id.replace(/^.*[\\/]/, '')));
+          $('#femida-audio').attr('src', response.temp_url);
           $('#femida-preview').show();
-          convertedFile = response.temp_id;
-          convertedDate = response.date;
+          convertedAsset = response;
           $('#confirm-femida-import').prop('disabled', false);
         }).fail(function () {
-          alert('Ошибка при конвертации');
           $('#loading-overlay').remove();
+          alert('Ошибка при конвертации');
         });
       });
 
@@ -294,14 +1161,18 @@
         $('#femida-preview').hide();
         $('#femida-audio').attr('src', '');
         $('#confirm-femida-import').prop('disabled', true);
-        convertedFile = null;
+        convertedAsset = null;
       });
 
       $('#confirm-femida-import').on('click', function () {
+        if (!convertedAsset) return;
+        addSources([convertedAsset]);
         $('#femidaModal').modal('hide');
-        $('#imported_temp_id').val(convertedFile);
-        $('#audio_date').val(convertedDate);
-        $('#audio_file').prop('disabled', true).prop('required', false);
+        $('#imported_temp_id').val('');
+
+        if (convertedAsset.date) {
+          $('#audio_date').val(convertedAsset.date);
+        }
 
         const selectedRoom = $('#femida-courtroom option:selected').text().trim().toLowerCase();
         $('#courtroom option').each(function () {
@@ -311,23 +1182,8 @@
         });
 
         const selectedName = $('.femida-case.active').data('name') || 'неизвестная запись';
-        const labelText = `✔ Импортировано: ${selectedName}`;
-        $('#imported-label').text(labelText);
-        if (!$('#imported-label').length) {
-          $('<div class="text-success mt-2" id="imported-label">')
-            .text(labelText)
-            .insertAfter('#import-from-femida');
-        }
+        $('#imported-label').text(`Импортировано из Фемиды: ${selectedName}. Источников: ${sources.length}`);
       });
-
-      function updateVRQueueInfo() {
-        fetch('/api/get_vr_queue_len')
-          .then(res => res.json())
-          .then(data => $('#vrQueueInfo').text(`Протоколов в очереди: ${data.records_to_vr}`))
-          .catch(() => $('#vrQueueInfo').text('Протоколов в очереди: ошибка загрузки'));
-      }
-
-      updateVRQueueInfo();
 
       $(document).on('click', '#copy-path-btn', function () {
         const filePath = $('#file-link').text();
@@ -335,104 +1191,88 @@
         tempTextArea[0].select();
         document.execCommand('copy');
         tempTextArea.remove();
-
         showToast('Путь скопирован в буфер обмена', 'Готово');
       });
 
-      $(document).on('paste', function (e) {
-        const items = e.originalEvent.clipboardData?.items;
-        if (!items) return;
-
-        $.each(items, function (_, item) {
-          if (item.kind === 'file' && item.type === 'audio/mpeg') {
-            const file = item.getAsFile();
-            if (!file) return;
-
-            const fileInput = $('#audio_file')[0];
-            const dt = new DataTransfer();
-            dt.items.add(file);
-            fileInput.files = dt.files;
-            $('#imported-label')
-              .text(`Файл вставлен из буфера: ${file.name}`)
-              .removeClass('text-danger')
-              .addClass('text-success');
-            $('#imported_temp_id').val('');
-            $('#audio_file').prop('disabled', false).prop('required', true);
-            showToast('Файл успешно вставлен из буфера', 'Готово');
-          }
-        });
-      });
-
-      $('form').on('submit', function (e) {
+      form.on('submit', function (e) {
         e.preventDefault();
-        const formData = new FormData(this);
         $('.alert').remove();
-        $(this).addClass('uploading');
-        $(this).find('button[type="submit"]').prop('disabled', true);
 
-        $.ajax({
-          url: '/upload_audio',
-          method: 'POST',
-          data: formData,
-          processData: false,
-          contentType: false,
-          success: function (response) {
-            const path = response.success;
-            const recordId = response.id;
-            let downloadButtonHtml = '';
-            if (recordId !== null && recordId !== undefined) {
-              downloadButtonHtml = `<a href="/api/download?id=${recordId}" class="btn btn-secondary btn-sm ml-2" download>Скачать переименованную запись</a>`;
-            }
-            $('#upload-alert-container').html(`
-            <div class="alert alert-success d-flex align-items-center" role="alert">
-              <i class="bi bi-check-circle-fill text-success me-2"></i>
-              <div>
-                <strong>Файл успешно загружен!</strong><br>
-                Прямая ссылка на файл:
-                <span id="file-link">${path}</span><br>
-                <button id="copy-path-btn" class="btn btn-primary btn-sm ml-2">
-                  <i class="bi bi-clipboard"></i> Копировать путь
-                </button>
-                ${downloadButtonHtml}
-              </div>
-            </div>
-          `);
-            $('form')[0].reset();
-            // Очистка следов Фемиды
-            $('#imported-label').remove();
-            $('#imported_temp_id').val('');
-            $('#audio_file').prop('disabled', false).prop('required', true);
-          },
-          error: function (xhr) {
-            const msg = xhr.responseJSON?.error || 'Неизвестная ошибка';
-            $('#upload-alert-container').html(`
+        if (!validateAudioDate()) {
+          return;
+        }
+
+        if (!sources.length) {
+          $('#upload-alert-container').html(`
             <div class="alert alert-danger d-flex align-items-center" role="alert">
               <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
-              <div>${msg}</div>
+              <div>Добавьте хотя бы один источник аудио.</div>
             </div>
           `);
-          },
-          complete: function () {
-            $('form').removeClass('uploading');
-            $('form').find('button[type="submit"]').prop('disabled', false);
-          }
+          return;
+        }
+
+        form.addClass('uploading');
+        form.find('button[type="submit"]').prop('disabled', true);
+        $('#imported_temp_id').val('');
+
+        renderFinalAudio(function () {
+          const formData = new FormData(form[0]);
+          $.ajax({
+            url: '/upload_audio',
+            method: 'POST',
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function (response) {
+              const path = response.success;
+              const recordId = response.id;
+              let downloadButtonHtml = '';
+              if (recordId !== null && recordId !== undefined) {
+                downloadButtonHtml = `<a href="/api/download?id=${recordId}" class="btn btn-secondary btn-sm ml-2" download>Скачать переименованную запись</a>`;
+              }
+              $('#upload-alert-container').html(`
+                <div class="alert alert-success d-flex align-items-center" role="alert">
+                  <i class="bi bi-check-circle-fill text-success me-2"></i>
+                  <div>
+                    <strong>Файл успешно загружен!</strong><br>
+                    Прямая ссылка на файл:
+                    <span id="file-link">${path}</span><br>
+                    <button id="copy-path-btn" class="btn btn-primary btn-sm ml-2">
+                      <i class="bi bi-clipboard"></i> Копировать путь
+                    </button>
+                    ${downloadButtonHtml}
+                  </div>
+                </div>
+              `);
+              form[0].reset();
+              clearSources();
+              formChanged = false;
+            },
+            error: function (xhr) {
+              const msg = xhr.responseJSON?.error || 'Неизвестная ошибка';
+              $('#upload-alert-container').html(`
+                <div class="alert alert-danger d-flex align-items-center" role="alert">
+                  <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
+                  <div>${msg}</div>
+                </div>
+              `);
+            },
+            complete: function () {
+              form.removeClass('uploading');
+              form.find('button[type="submit"]').prop('disabled', false);
+            }
+          });
         });
       });
-    })
 
-    $(function () {
-      // Отслеживаем любые изменения в форме
-      $('form :input').on('change input', function () {
+      form.find(':input').on('change input', function () {
         formChanged = true;
       });
-      // Когда форма успешно отправлена — сбрасываем флаг
-      $('form').on('submit', function () {
-        formChanged = false;
-      });
-      // Предупреждение при попытке закрыть / перезагрузить страницу
+
       $(window).on('beforeunload', function (e) {
         if (formChanged) {
-          const message = 'Вы заполнили форму, но не отправили её. Уйти со страницы?';
+          const message = 'Вы заполнили форму, но не отправили ее. Уйти со страницы?';
           e.originalEvent.returnValue = message;
           return message;
         }
@@ -452,13 +1292,13 @@
       }
     });
 
-    function showToast(message, title = "Уведомление") {
+    function showToast(message, title = 'Уведомление') {
       const toastId = 'toast-' + Date.now();
       const toastHtml = `
       <div id="${toastId}" class="toast align-items-center text-bg-dark border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true">
         <div class="d-flex">
           <div class="toast-body">
-            ${message}
+            <strong>${title}.</strong> ${message}
           </div>
           <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Закрыть"></button>
         </div>
@@ -467,6 +1307,7 @@
       new bootstrap.Toast(document.getElementById(toastId), { delay: 3000 }).show();
     }
   </script>
+
   <style>
     #loading-overlay {
       position: fixed;
@@ -490,6 +1331,194 @@
     .femida-case.active {
       background: #cce;
       font-weight: bold;
+    }
+
+    .audio-sources-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .audio-source-item {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      border: 1px solid #d7deea;
+      border-radius: 0.75rem;
+      padding: 0.75rem;
+      background: #fff;
+      cursor: grab;
+    }
+
+    .audio-source-item.active {
+      border-color: #0d6efd;
+      box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.15);
+    }
+
+    .audio-source-item.drag-over {
+      border-color: #198754;
+      background: #eefbf3;
+    }
+
+    .audio-source-handle {
+      font-size: 1.25rem;
+      color: #6c757d;
+    }
+
+    .audio-source-meta {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .audio-source-title {
+      font-weight: 600;
+      word-break: break-word;
+    }
+
+    .audio-source-summary {
+      font-size: 0.85rem;
+      color: #6c757d;
+    }
+
+    .audio-source-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .audio-editor {
+      border-radius: 0.85rem;
+      padding: 0;
+    }
+
+    .audio-editor-dialog {
+      max-width: min(1400px, 96vw);
+    }
+
+    #audioEditorModal .modal-content {
+      border-radius: 1rem;
+    }
+
+    #editor-audio {
+      display: none;
+    }
+
+    .editor-mode-switch {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .editor-timeline {
+      position: relative;
+      height: 180px;
+      border-radius: 0.75rem;
+      background: #1f3d6b;
+      overflow: hidden;
+      cursor: pointer;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    #editor-waveform {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    .editor-track {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      margin-top: -1px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .editor-selection {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(0, 255, 255, 0.25);
+      border-left: 3px solid #00f0ff;
+      border-right: 3px solid #00f0ff;
+    }
+
+    .editor-cut-region {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(98, 31, 102, 0.55);
+      border-left: 2px solid #e18cff;
+      border-right: 2px solid #e18cff;
+      display: none;
+    }
+
+    .editor-playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #ffffff;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+      pointer-events: none;
+    }
+
+    .editor-player-controls {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .editor-main-controls {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .editor-secondary-controls {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .editor-time-readout {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 0.8rem;
+      background: var(--bs-light);
+      border: 1px solid var(--bs-border-color);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .editor-inline-control {
+      min-width: 220px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin: 0;
+      font-size: 0.9rem;
+    }
+
+    .editor-inline-control .form-range {
+      margin: 0;
+    }
+
+    .editor-inline-value {
+      color: var(--bs-secondary-color);
+      font-size: 0.85rem;
+    }
+
+    .editor-speed-control {
+      min-width: 120px;
     }
   </style>
 </body>
