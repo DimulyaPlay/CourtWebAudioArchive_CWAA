@@ -102,6 +102,106 @@ def _normalize_segments(duration, trim_start, trim_end, cut_start, cut_end, mode
     return [(trim_start, trim_end)] if trim_end > trim_start else []
 
 
+def _sanitize_download_stub(value, fallback):
+    safe = re.sub(r'[\\/:*?"<>|]+', '_', str(value or '')).strip(' ._')
+    return safe or fallback
+
+
+def _build_render_download_name(case_number=None, audio_date=None, audio_time=None):
+    parts = []
+    if case_number:
+        parts.append(_sanitize_download_stub(case_number, 'audio'))
+    if audio_date:
+        parts.append(_sanitize_download_stub(audio_date, 'date'))
+    if audio_time:
+        parts.append(_sanitize_download_stub(str(audio_time).replace(':', '-'), 'time'))
+    if not parts:
+        parts.append(f'edited_{datetime.now().strftime("%Y-%m-%d_%H-%M")}')
+    return f'{"_".join(parts)[:120]}.mp3'
+
+
+def _render_sources_to_temp_file(sources):
+    if not sources:
+        raise ValueError('sources required')
+
+    job_dir = tempfile.mkdtemp(prefix='cwaa_edit_', dir=TEMP_MP3_FOLDER)
+    concat_manifest = os.path.join(job_dir, 'concat.txt')
+    segment_files = []
+    try:
+        with FFMPEG_SEMAPHORE:
+            for index, source in enumerate(sources):
+                temp_id = source.get('temp_id')
+                source_name = source.get('name') or f'Источник {index + 1}'
+                if not temp_id or not os.path.exists(temp_id):
+                    raise ValueError(f'Временный файл не найден: {source_name}')
+
+                duration = _run_ffprobe(temp_id)
+                segments = _normalize_segments(
+                    duration,
+                    source.get('trim_start', 0),
+                    source.get('trim_end', duration),
+                    source.get('cut_start'),
+                    source.get('cut_end'),
+                    source.get('mode', 'trim')
+                )
+                if not segments:
+                    continue
+
+                for seg_index, (start, end) in enumerate(segments):
+                    segment_path = os.path.join(job_dir, f'segment_{index}_{seg_index}.mp3')
+                    cmd = [
+                        'ffmpeg', '-y',
+                        '-ss', f'{start:.3f}',
+                        '-to', f'{end:.3f}',
+                        '-i', temp_id,
+                        '-ac', '1',
+                        '-ar', '16000',
+                        '-q:a', '2',
+                        segment_path
+                    ]
+                    result = _run_ffmpeg(cmd)
+                    if result.returncode != 0:
+                        raise RuntimeError(f'Ошибка ffmpeg при обработке "{source_name}": {result.stderr[:200]}')
+                    segment_files.append(segment_path)
+
+            if not segment_files:
+                raise ValueError('После обрезки не осталось аудио')
+
+            with open(concat_manifest, 'w', encoding='utf-8') as f:
+                for segment_path in segment_files:
+                    escaped = segment_path.replace("'", "'\\''")
+                    f.write(f"file '{escaped}'\n")
+
+            final_path = os.path.join(TEMP_MP3_FOLDER, f'edited_{uuid.uuid4().hex}.mp3')
+            concat_cmd = [
+                'ffmpeg', '-y',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_manifest,
+                '-c', 'copy',
+                final_path
+            ]
+            concat_result = _run_ffmpeg(concat_cmd)
+            if concat_result.returncode != 0:
+                concat_cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat',
+                    '-safe', '0',
+                    '-i', concat_manifest,
+                    '-ac', '1',
+                    '-ar', '16000',
+                    '-q:a', '2',
+                    final_path
+                ]
+                concat_result = _run_ffmpeg(concat_cmd)
+                if concat_result.returncode != 0:
+                    raise RuntimeError(f'Ошибка ffmpeg при склейке: {concat_result.stderr[:200]}')
+
+        return final_path
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
 @api.route('/search')
 def search_records():
     with Session() as session:
@@ -472,6 +572,29 @@ def render_edit():
 
 # Используем отдельный эндпоинт для временных файлов, чтобы не конфликтовать
 # с основным обработчиком /audio/<path:filename>
+@api.route('/download_rendered_edit', methods=['POST'])
+def download_rendered_edit():
+    payload = request.get_json(silent=True) or {}
+    sources = payload.get('sources') or []
+    try:
+        final_path = _render_sources_to_temp_file(sources)
+        download_name = _build_render_download_name(
+            payload.get('case_number'),
+            payload.get('audio_date'),
+            payload.get('audio_time')
+        )
+        return send_file(
+            final_path,
+            mimetype='audio/mpeg',
+            as_attachment=True,
+            download_name=download_name
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
 @api.route('/temp_audio/<filename>')
 def serve_temp_audio(filename):
     path = os.path.join(TEMP_MP3_FOLDER, filename)

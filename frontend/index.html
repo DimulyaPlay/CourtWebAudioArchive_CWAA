@@ -107,9 +107,16 @@
       <div class="mt-2">
         <input id="imported_temp_id" name="imported_temp_id" type="hidden">
         <input id="final_temp_id" name="final_temp_id" type="hidden">
-        <button class="btn btn-primary" type="submit">
-          <i class="bi bi-cloud-upload"></i> Подтвердить и сохранить на сервере
-        </button>
+        <div class="d-flex gap-2 flex-wrap">
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-cloud-upload"></i> Подтвердить и сохранить на сервере
+          </button>
+          <button class="btn btn-secondary" id="download-rendered-audio"
+            title="Скачать результат работы в редакторе аудифайлов (применить редактирование источников и склеить в один файл)"
+            type="button">
+            <i class="bi bi-download"></i> Скачать без сохранения на сервере
+          </button>
+        </div>
       </div>
 
       <div class="upload-spinner">
@@ -296,6 +303,61 @@
     </div>
   </div>
 
+  <div class="modal fade" id="welcomeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content welcome-modal-content">
+        <div class="modal-header border-0 pb-0">
+          <div>
+            <div class="text-primary small fw-semibold text-uppercase">Новый функционал</div>
+            <h5 class="modal-title mb-0">Как работать с источниками и редактором</h5>
+          </div>
+          <button class="btn-close" data-bs-dismiss="modal" type="button" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body pt-3">
+          <p class="mb-3">
+            Теперь можно собирать аудиопротокол из нескольких аудиозаписей и быстро корректировать каждый файл
+            перед сохранением.
+          </p>
+          <div class="welcome-tip">
+            <div class="welcome-tip-title">1. Добавьте источники</div>
+            <div class="text-muted small">
+              Нажмите <b>«Добавить MP3»</b>, импортируйте запись из <b>Фемиды</b>, вставьте файл через <b>Ctrl+V</b>
+              или просто <b>перетащите MP3 на страницу</b>.
+            </div>
+          </div>
+          <div class="welcome-tip">
+            <div class="welcome-tip-title">2. Проверьте порядок</div>
+            <div class="text-muted small">
+              Записи можно менять местами перетаскиванием. Они будут склеены именно в том порядке,
+              в котором стоят в списке.
+            </div>
+          </div>
+          <div class="welcome-tip">
+            <div class="welcome-tip-title">3. Откройте редактор</div>
+            <div class="text-muted small">
+              У каждого аудио есть редактор. В нем можно прослушать запись, обрезать лишнее по краям или вырезать
+              ненужный фрагмент из середины записи. Когда запись обрезана как надо просто закройте редактор, изменения будут учтены при сохранении.
+            </div>
+          </div>
+          <div class="welcome-tip">
+            <div class="welcome-tip-title">4. Сохраните результат</div>
+            <div class="text-muted small">
+              Сохраните аудио на сервере и получите ссылку или просто скачайте отредактированный файл без сохранения,
+              если нужно просто отредактировать запись.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer border-0 pt-0 justify-content-between">
+          <div class="form-check me-3">
+            <input class="form-check-input" id="hide-welcome-modal" type="checkbox">
+            <label class="form-check-label" for="hide-welcome-modal">Больше не показывать это сообщение</label>
+          </div>
+          <button class="btn btn-primary" data-bs-dismiss="modal" id="close-welcome-modal" type="button">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="position-fixed bottom-0 start-0 p-3" style="z-index: 9999">
     <div id="copyToastContainer"></div>
   </div>
@@ -303,6 +365,8 @@
     let formChanged = false;
 
     $(function () {
+      const welcomeModalElement = document.getElementById('welcomeModal');
+      const welcomeModal = welcomeModalElement ? new bootstrap.Modal(welcomeModalElement) : null;
       const dropOverlay = $('#drop-overlay');
       const audioInput = $('#audio_file');
       const form = $('form');
@@ -321,6 +385,17 @@
       let dragSourceId = null;
       let sortingSources = false;
       let playbackAnimationFrame = null;
+      const hideWelcomeModalKey = 'cwaa_hide_welcome_modal';
+      const sessionWelcomeModalKey = 'cwaa_welcome_modal_shown';
+
+      function maybeShowWelcomeModal() {
+        if (!welcomeModal) return;
+        const hiddenPermanently = localStorage.getItem(hideWelcomeModalKey) === 'true';
+        const alreadyShownThisSession = sessionStorage.getItem(sessionWelcomeModalKey) === 'true';
+        if (hiddenPermanently || alreadyShownThisSession) return;
+        welcomeModal.show();
+        sessionStorage.setItem(sessionWelcomeModalKey, 'true');
+      }
 
       function clamp(value, min, max) {
         return Math.min(Math.max(value, min), max);
@@ -796,17 +871,7 @@
       }
 
       function renderFinalAudio(callback) {
-        const payload = {
-          sources: sources.map(source => ({
-            temp_id: source.temp_id,
-            name: source.name,
-            mode: source.mode,
-            trim_start: source.trim_start,
-            trim_end: source.trim_end,
-            cut_start: source.cut_start,
-            cut_end: source.cut_end
-          }))
-        };
+        const payload = buildRenderPayload();
 
         $.ajax({
           url: '/api/render_edit',
@@ -819,16 +884,97 @@
           },
           error: function (xhr) {
             const msg = xhr.responseJSON?.error || 'Не удалось собрать итоговый аудиофайл';
-            $('#upload-alert-container').html(`
-              <div class="alert alert-danger d-flex align-items-center" role="alert">
-                <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
-                <div>${msg}</div>
-              </div>
-            `);
-            form.removeClass('uploading');
-            form.find('button[type="submit"]').prop('disabled', false);
+            showUploadAlert(msg, 'danger');
+            setSubmissionState(false);
           }
         });
+      }
+
+      function buildRenderPayload() {
+        return {
+          sources: sources.map(source => ({
+            temp_id: source.temp_id,
+            name: source.name,
+            mode: source.mode,
+            trim_start: source.trim_start,
+            trim_end: source.trim_end,
+            cut_start: source.cut_start,
+            cut_end: source.cut_end
+          })),
+          case_number: $('#case_number').val().trim(),
+          audio_date: $('#audio_date').val(),
+          audio_time: $('#audio_time').val()
+        };
+      }
+
+      function setSubmissionState(isBusy) {
+        form.toggleClass('uploading', isBusy);
+        form.find('button[type="submit"], #download-rendered-audio').prop('disabled', isBusy);
+      }
+
+      function showUploadAlert(message, level) {
+        const iconClass = level === 'success'
+          ? 'bi-check-circle-fill text-success'
+          : 'bi-exclamation-triangle-fill text-danger';
+        $('#upload-alert-container').html(`
+          <div class="alert alert-${level} d-flex align-items-center" role="alert">
+            <i class="bi ${iconClass} me-2"></i>
+            <div>${message}</div>
+          </div>
+        `);
+      }
+
+      async function downloadRenderedAudio() {
+        $('.alert').remove();
+
+        if (!validateAudioDate()) {
+          return;
+        }
+
+        if (!sources.length) {
+          showUploadAlert('Добавьте хотя бы один источник аудио.', 'danger');
+          return;
+        }
+
+        setSubmissionState(true);
+        $('#imported_temp_id').val('');
+
+        try {
+          const response = await fetch('/api/download_rendered_edit', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(buildRenderPayload())
+          });
+
+          if (!response.ok) {
+            let errorMessage = 'Не удалось подготовить файл для скачивания';
+            try {
+              const errorPayload = await response.json();
+              errorMessage = errorPayload.error || errorMessage;
+            } catch (error) {
+            }
+            throw new Error(errorMessage);
+          }
+
+          const blob = await response.blob();
+          const contentDisposition = response.headers.get('Content-Disposition') || '';
+          const fileNameMatch = contentDisposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+          const downloadName = fileNameMatch ? decodeURIComponent(fileNameMatch[1].replace(/"/g, '')) : 'edited.mp3';
+          const downloadUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = downloadUrl;
+          link.download = downloadName;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(downloadUrl);
+        } catch (error) {
+          showUploadAlert(error.message || 'Не удалось подготовить файл для скачивания', 'danger');
+        } finally {
+          setSubmissionState(false);
+        }
       }
 
       function updateVRQueueInfo() {
@@ -1203,17 +1349,11 @@
         }
 
         if (!sources.length) {
-          $('#upload-alert-container').html(`
-            <div class="alert alert-danger d-flex align-items-center" role="alert">
-              <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
-              <div>Добавьте хотя бы один источник аудио.</div>
-            </div>
-          `);
+          showUploadAlert('Добавьте хотя бы один источник аудио.', 'danger');
           return;
         }
 
-        form.addClass('uploading');
-        form.find('button[type="submit"]').prop('disabled', true);
+        setSubmissionState(true);
         $('#imported_temp_id').val('');
 
         renderFinalAudio(function () {
@@ -1251,19 +1391,27 @@
             },
             error: function (xhr) {
               const msg = xhr.responseJSON?.error || 'Неизвестная ошибка';
-              $('#upload-alert-container').html(`
-                <div class="alert alert-danger d-flex align-items-center" role="alert">
-                  <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>
-                  <div>${msg}</div>
-                </div>
-              `);
+              showUploadAlert(msg, 'danger');
             },
             complete: function () {
-              form.removeClass('uploading');
-              form.find('button[type="submit"]').prop('disabled', false);
+              setSubmissionState(false);
             }
           });
         });
+      });
+
+      $('#download-rendered-audio').on('click', function () {
+        downloadRenderedAudio();
+      });
+
+      $('#close-welcome-modal').on('click', function () {
+        const shouldHide = $('#hide-welcome-modal').is(':checked');
+        localStorage.setItem(hideWelcomeModalKey, shouldHide ? 'true' : 'false');
+      });
+
+      $('#welcomeModal').on('hidden.bs.modal', function () {
+        const shouldHide = $('#hide-welcome-modal').is(':checked');
+        localStorage.setItem(hideWelcomeModalKey, shouldHide ? 'true' : 'false');
       });
 
       form.find(':input').on('change input', function () {
@@ -1277,6 +1425,12 @@
           return message;
         }
       });
+
+      if (localStorage.getItem(hideWelcomeModalKey) === 'true') {
+        $('#hide-welcome-modal').prop('checked', true);
+      }
+
+      maybeShowWelcomeModal();
     });
 
     $(document).on('click', '#open-archive', function (e) {
@@ -1519,6 +1673,29 @@
 
     .editor-speed-control {
       min-width: 120px;
+    }
+
+    .welcome-modal-content {
+      border: 0;
+      border-radius: 1rem;
+      box-shadow: 0 1rem 2.5rem rgba(31, 61, 107, 0.18);
+    }
+
+    .welcome-tip {
+      padding: 0.85rem 1rem;
+      border-radius: 0.85rem;
+      background: #f6f8fc;
+      border: 1px solid #dfe7f5;
+    }
+
+    .welcome-tip + .welcome-tip {
+      margin-top: 0.75rem;
+    }
+
+    .welcome-tip-title {
+      font-weight: 600;
+      margin-bottom: 0.2rem;
+      color: #1f3d6b;
     }
   </style>
 </body>
