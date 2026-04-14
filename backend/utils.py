@@ -13,7 +13,7 @@ TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
 os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
 FILE_LIFETIME_SECONDS = 3600  # 1 час
 CHECK_INTERVAL_SECONDS = 300  # каждые 5 минут
-version = "2.2"
+version = "2.3"
 
 
 def cleanup_old_mp3_files():

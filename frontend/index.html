@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta content="width=device-width, initial-scale=1.0" name="viewport">
@@ -129,7 +129,6 @@
       </div>
 
       <div class="mt-2">
-        <input id="imported_temp_id" name="imported_temp_id" type="hidden">
         <input id="final_temp_id" name="final_temp_id" type="hidden">
         <div class="d-flex gap-2 flex-wrap">
           <button class="btn btn-primary" type="submit">
@@ -245,6 +244,7 @@
               <div class="editor-cut-region" id="editor-cut-region"></div>
               <div class="editor-playhead" id="editor-playhead"></div>
             </div>
+            <div class="small text-muted mb-3" id="editor-waveform-note"></div>
 
             <div class="editor-player-controls mb-3">
               <div class="editor-main-controls">
@@ -366,7 +366,7 @@
           <div class="welcome-tip">
             <div class="welcome-tip-title">4. Сохраните результат</div>
             <div class="text-muted small">
-              Сохраните аудио на сервере и получите ссылку или просто скачайте отредактированный файл без сохранения,
+              Сохраните аудио на сервере и получите ссылку или скачайте отредактированный файл без сохранения,
               если нужно просто отредактировать запись.
             </div>
           </div>
@@ -402,7 +402,6 @@
       const finalPreviewAudio = document.getElementById('final-preview-audio');
       const finalTimelineBar = $('#final-timeline-bar');
       const audioContext = window.AudioContext || window.webkitAudioContext ? new (window.AudioContext || window.webkitAudioContext)() : null;
-      const waveformCache = new Map();
       let mediaElementSource = null;
       let gainNode = null;
       let selectedPath = null;
@@ -444,7 +443,9 @@
       }
 
       function getTodayIsoDate() {
-        return new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const offsetMs = now.getTimezoneOffset() * 60000;
+        return new Date(now.getTime() - offsetMs).toISOString().split('T')[0];
       }
 
       function validateAudioDate() {
@@ -497,6 +498,10 @@
           temp_id: asset.temp_id,
           temp_url: asset.temp_url,
           name: asset.name,
+          file_size: Number(asset.file_size || 0),
+          waveformPeaks: Array.isArray(asset.waveform_peaks)
+            ? asset.waveform_peaks.map(value => Number(value) || 0)
+            : [],
           duration,
           mode: 'trim',
           trim_start: 0,
@@ -512,6 +517,31 @@
           return `Сохраняется диапазон ${trimText}, вырезается ${formatSeconds(source.cut_start)} - ${formatSeconds(source.cut_end)}`;
         }
         return `Сохраняется диапазон ${trimText}`;
+      }
+
+      function formatFileSize(bytes) {
+        const value = Number(bytes || 0);
+        if (!value) return '0 Б';
+        const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+        let size = value;
+        let unitIndex = 0;
+        while (size >= 1024 && unitIndex < units.length - 1) {
+          size /= 1024;
+          unitIndex += 1;
+        }
+        return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+      }
+
+      function getWaveformMessage(source) {
+        if (!source) return '';
+        if (source.waveformPeaks?.length) {
+          return `Форма волны подготовлена на сервере. Размер файла: ${formatFileSize(source.file_size)}.`;
+        }
+        return 'Не удалось подготовить форму волны на сервере. Прослушивание и редактирование по времени остаются доступны.';
+      }
+
+      function updateWaveformNote(source) {
+        $('#editor-waveform-note').text(getWaveformMessage(source));
       }
 
       function isSourceEdited(source) {
@@ -868,44 +898,9 @@
         });
       }
 
-      async function ensureWaveformData(source) {
-        if (!source || source.waveformPeaks || !audioContext) {
-          drawWaveform(source);
-          return;
-        }
-        if (waveformCache.has(source.temp_id)) {
-          source.waveformPeaks = waveformCache.get(source.temp_id);
-          drawWaveform(source);
-          return;
-        }
-        try {
-          if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-          }
-          const response = await fetch(source.temp_url);
-          const arrayBuffer = await response.arrayBuffer();
-          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-          const samples = 400;
-          const channel = audioBuffer.getChannelData(0);
-          const blockSize = Math.max(1, Math.floor(channel.length / samples));
-          const peaks = [];
-          for (let i = 0; i < samples; i++) {
-            const start = i * blockSize;
-            const end = Math.min(start + blockSize, channel.length);
-            let peak = 0;
-            for (let j = start; j < end; j++) {
-              const value = Math.abs(channel[j]);
-              if (value > peak) peak = value;
-            }
-            peaks.push(peak);
-          }
-          source.waveformPeaks = peaks;
-          waveformCache.set(source.temp_id, peaks);
-          drawWaveform(source);
-        } catch (error) {
-          source.waveformPeaks = [];
-          drawWaveform(source);
-        }
+      function ensureWaveformData(source) {
+        updateWaveformNote(source);
+        drawWaveform(source);
       }
 
       function renderSourceList() {
@@ -938,6 +933,7 @@
           $('#editor-selection').css({ left: '0%', width: '0%' });
           $('#editor-cut-region').hide();
           $('#editor-active-range').text('0:00.0 - 0:00.0');
+          updateWaveformNote(null);
           drawWaveform(null);
           return;
         }
@@ -966,6 +962,7 @@
           $('#editor-current-time').text('0:00.0');
           $('#editor-active-range').text('0:00.0 - 0:00.0');
           $('#editor-playhead').css('left', '0%');
+          updateWaveformNote(null);
           updatePlayButton();
           drawWaveform(null);
           return;
@@ -1016,7 +1013,7 @@
 
         updateTimeline(source);
         renderSourceList();
-        await ensureWaveformData(source);
+        ensureWaveformData(source);
       }
 
       function applyEditorValues() {
@@ -1098,7 +1095,6 @@
         editorAudio.load();
         stopPlaybackAnimation();
         $('#final_temp_id').val('');
-        $('#imported_temp_id').val('');
         $('#imported-label').text('');
         audioEditorModal.hide();
         renderSourceList();
@@ -1162,12 +1158,18 @@
           data,
           processData: false,
           contentType: false,
+          beforeSend: function () {
+            showLoadingOverlay('Загрузка аудиофайлов...');
+          },
           success: function (response) {
             addSources(response.items || []);
             audioInput.val('');
           },
           error: function (xhr) {
             alert(xhr.responseJSON?.error || 'Ошибка при загрузке временных аудиофайлов');
+          },
+          complete: function () {
+            hideLoadingOverlay();
           }
         });
       }
@@ -1226,8 +1228,21 @@
         `);
       }
 
+      function showLoadingOverlay(message = 'Обработка...') {
+        const overlay = $('#loading-overlay');
+        if (overlay.length) {
+          overlay.text(message);
+          return;
+        }
+        $('body').append(`<div id="loading-overlay">${message}</div>`);
+      }
+
+      function hideLoadingOverlay() {
+        $('#loading-overlay').remove();
+      }
+
       async function downloadRenderedAudio() {
-        $('.alert').remove();
+        $('#upload-alert-container').empty();
 
         if (!validateAudioDate()) {
           return;
@@ -1239,7 +1254,6 @@
         }
 
         setSubmissionState(true);
-        $('#imported_temp_id').val('');
 
         try {
           const response = await fetch('/api/download_rendered_edit', {
@@ -1619,15 +1633,15 @@
 
       $('#convert-femida').on('click', function () {
         if (!selectedPath) return;
-        $('body').append('<div id="loading-overlay">Обработка...</div>');
+        showLoadingOverlay('Обработка...');
         $.post('/api/convert_case', { path: selectedPath }, function (response) {
-          $('#loading-overlay').remove();
+          hideLoadingOverlay();
           $('#femida-audio').attr('src', response.temp_url);
           $('#femida-preview').show();
           convertedAsset = response;
           $('#confirm-femida-import').prop('disabled', false);
         }).fail(function () {
-          $('#loading-overlay').remove();
+          hideLoadingOverlay();
           alert('Ошибка при конвертации');
         });
       });
@@ -1643,7 +1657,6 @@
         if (!convertedAsset) return;
         addSources([convertedAsset]);
         $('#femidaModal').modal('hide');
-        $('#imported_temp_id').val('');
 
         if (convertedAsset.date) {
           $('#audio_date').val(convertedAsset.date);
@@ -1671,7 +1684,7 @@
 
       form.on('submit', function (e) {
         e.preventDefault();
-        $('.alert').remove();
+        $('#upload-alert-container').empty();
 
         if (!validateAudioDate()) {
           return;
@@ -1683,7 +1696,6 @@
         }
 
         setSubmissionState(true);
-        $('#imported_temp_id').val('');
 
         renderFinalAudio(function () {
           const formData = new FormData(form[0]);

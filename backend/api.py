@@ -23,8 +23,13 @@ from threading import Semaphore
 import uuid
 import tempfile
 import shutil
+import math
+import json
+from array import array
 
 FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвертации одновременно
+WAVEFORM_PEAK_COUNT = 600
+WAVEFORM_SAMPLE_RATE = 8000
 
 
 api = Blueprint('api', __name__)
@@ -76,13 +81,120 @@ def _run_ffprobe(file_path):
     return float(result.stdout.strip())
 
 
+def _get_waveform_cache_path(temp_path):
+    return f'{temp_path}.waveform.json'
+
+
+def _build_waveform_peaks(temp_path, duration, peak_count=WAVEFORM_PEAK_COUNT):
+    if duration <= 0 or peak_count <= 0:
+        return []
+
+    total_samples = max(1, int(math.ceil(duration * WAVEFORM_SAMPLE_RATE)))
+    samples_per_peak = max(1, int(math.ceil(total_samples / peak_count)))
+    peaks = []
+    current_peak = 0.0
+    samples_in_bucket = 0
+
+    cmd = [
+        _resolve_tool('ffmpeg'),
+        '-v', 'error',
+        '-i', temp_path,
+        '-ac', '1',
+        '-ar', str(WAVEFORM_SAMPLE_RATE),
+        '-f', 's16le',
+        '-acodec', 'pcm_s16le',
+        '-'
+    ]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        while True:
+            chunk = process.stdout.read(65536)
+            if not chunk:
+                break
+
+            if len(chunk) % 2:
+                chunk = chunk[:-1]
+            if not chunk:
+                continue
+
+            samples = array('h')
+            samples.frombytes(chunk)
+            for sample in samples:
+                amplitude = abs(sample) / 32768.0
+                if amplitude > current_peak:
+                    current_peak = amplitude
+                samples_in_bucket += 1
+                if samples_in_bucket >= samples_per_peak:
+                    peaks.append(round(min(current_peak, 1.0), 4))
+                    current_peak = 0.0
+                    samples_in_bucket = 0
+
+        if samples_in_bucket:
+            peaks.append(round(min(current_peak, 1.0), 4))
+
+        stderr_output = process.stderr.read().decode('utf-8', errors='ignore')
+        if process.wait() != 0:
+            raise RuntimeError(stderr_output.strip() or 'ffmpeg waveform generation failed')
+    finally:
+        if process.stdout:
+            process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
+
+    if not peaks:
+        return []
+
+    if len(peaks) > peak_count:
+        return peaks[:peak_count]
+    if len(peaks) < peak_count:
+        peaks.extend([0.0] * (peak_count - len(peaks)))
+    return peaks
+
+
+def _get_or_build_waveform_peaks(temp_path, duration, file_size, peak_count=WAVEFORM_PEAK_COUNT):
+    cache_path = _get_waveform_cache_path(temp_path)
+    try:
+        if os.path.exists(cache_path):
+            with open(cache_path, 'r', encoding='utf-8') as cache_file:
+                cached = json.load(cache_file)
+            if (
+                cached.get('peak_count') == peak_count
+                and cached.get('sample_rate') == WAVEFORM_SAMPLE_RATE
+                and int(cached.get('file_size') or 0) == int(file_size or 0)
+            ):
+                peaks = cached.get('peaks') or []
+                if isinstance(peaks, list):
+                    return [float(value) for value in peaks[:peak_count]]
+    except Exception:
+        pass
+
+    try:
+        peaks = _build_waveform_peaks(temp_path, duration, peak_count=peak_count)
+        with open(cache_path, 'w', encoding='utf-8') as cache_file:
+            json.dump({
+                'peak_count': peak_count,
+                'sample_rate': WAVEFORM_SAMPLE_RATE,
+                'duration': round(duration, 3),
+                'file_size': int(file_size or 0),
+                'peaks': peaks
+            }, cache_file, ensure_ascii=False)
+        return peaks
+    except Exception:
+        return []
+
+
 def _build_temp_asset_response(temp_path, source_name=None, date=None):
     filename = os.path.basename(temp_path)
+    file_size = os.path.getsize(temp_path)
+    duration = round(_run_ffprobe(temp_path), 3)
     return {
         'temp_id': temp_path,
         'temp_url': f"/api/temp_audio/{filename}",
         'name': source_name or filename,
-        'duration': round(_run_ffprobe(temp_path), 3),
+        'file_size': file_size,
+        'duration': duration,
+        'waveform_peaks': _get_or_build_waveform_peaks(temp_path, duration, file_size),
         'date': date
     }
 
@@ -100,6 +212,41 @@ def _normalize_segments(duration, trim_start, trim_end, cut_start, cut_end, mode
             segments.append((cut_end, trim_end))
         return segments
     return [(trim_start, trim_end)] if trim_end > trim_start else []
+
+
+def _is_source_passthrough(source, epsilon=0.05):
+    temp_id = source.get('temp_id')
+    if not temp_id or not os.path.exists(temp_id):
+        return False
+    if source.get('mode', 'trim') != 'trim':
+        return False
+
+    duration = _run_ffprobe(temp_id)
+    segments = _normalize_segments(
+        duration,
+        source.get('trim_start', 0),
+        source.get('trim_end', duration),
+        source.get('cut_start'),
+        source.get('cut_end'),
+        source.get('mode', 'trim')
+    )
+    if len(segments) != 1:
+        return False
+
+    start, end = segments[0]
+    return abs(start) <= epsilon and abs(end - duration) <= epsilon
+
+
+def _single_source_passthrough_temp_id(sources):
+    if len(sources) != 1:
+        return None
+    source = sources[0]
+    temp_id = source.get('temp_id')
+    if not temp_id or not os.path.exists(temp_id):
+        return None
+    if _is_source_passthrough(source):
+        return temp_id
+    return None
 
 
 def _sanitize_download_stub(value, fallback):
@@ -123,6 +270,10 @@ def _build_render_download_name(case_number=None, audio_date=None, audio_time=No
 def _render_sources_to_temp_file(sources):
     if not sources:
         raise ValueError('sources required')
+
+    passthrough_temp_id = _single_source_passthrough_temp_id(sources)
+    if passthrough_temp_id:
+        return passthrough_temp_id
 
     job_dir = tempfile.mkdtemp(prefix='cwaa_edit_', dir=TEMP_MP3_FOLDER)
     concat_manifest = os.path.join(job_dir, 'concat.txt')
@@ -491,6 +642,10 @@ def render_edit():
     sources = payload.get('sources') or []
     if not sources:
         return jsonify({'error': 'sources required'}), 400
+
+    passthrough_temp_id = _single_source_passthrough_temp_id(sources)
+    if passthrough_temp_id:
+        return jsonify({'temp_id': passthrough_temp_id})
 
     job_dir = tempfile.mkdtemp(prefix='cwaa_edit_', dir=TEMP_MP3_FOLDER)
     concat_manifest = os.path.join(job_dir, 'concat.txt')
