@@ -4,6 +4,7 @@
   const QUEUE_POLL_MS = 30000;
   const EMPTY_TRANSCRIPT_TEXT = 'Выберите аудиозапись для просмотра протокола';
   const NO_TRANSCRIPT_TEXT = 'У выбранной записи отсутствует протокол.';
+  const QUEUED_TRANSCRIPT_TEXT = 'Протокол находится в очереди распознавания, откройте эту страницу через несколько минут';
 
   const ui = {
     audio: document.getElementById('audioPlayer'),
@@ -461,7 +462,7 @@
     ui.transcriptBox.empty().scrollTop(0);
 
     if (!state.phrases.length) {
-      setEmptyTranscript(NO_TRANSCRIPT_TEXT);
+      setEmptyTranscript(data.is_in_recognition_queue ? QUEUED_TRANSCRIPT_TEXT : NO_TRANSCRIPT_TEXT);
       return;
     }
 
@@ -482,7 +483,6 @@
   function loadRecord(recordId) {
     state.currentRecordId = recordId;
     const requestToken = ++state.recordRequestToken;
-    showOverlay();
 
     getJSON(`/api/record/${recordId}`)
       .done(function (data) {
@@ -501,8 +501,7 @@
         ui.recordInfo.text('');
         setEmptyTranscript(apiErrorMessage(xhr, 'Не удалось загрузить протокол'));
         showToast(apiErrorMessage(xhr, 'Не удалось загрузить протокол'), 'Ошибка');
-      })
-      .always(hideOverlay);
+      });
   }
 
   function resetViewerState() {

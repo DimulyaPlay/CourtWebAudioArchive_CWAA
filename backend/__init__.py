@@ -1,6 +1,7 @@
 import traceback
 
 from flask import Flask
+from flask import url_for
 import os
 import sys
 from datetime import timedelta
@@ -24,6 +25,12 @@ def create_app():
         app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
         app.config['SEND_FILE_MAX_AGE_DEFAULT'] = timedelta(seconds=31536000)
         app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {"connect_args": {"check_same_thread": False, "timeout": 60}}
+        app.jinja_env.filters['versioned_static'] = lambda filename: (
+            url_for('static', filename=str(filename).lstrip('/\\')) + '?v=' + str(
+                int(os.path.getmtime(os.path.join(app.static_folder, str(filename).lstrip('/\\'))))
+            )
+        )
+
         from .views import views
         from .api import api
         app.register_blueprint(views, url_prefix='/')

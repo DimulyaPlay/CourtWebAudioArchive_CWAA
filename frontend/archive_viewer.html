@@ -4,10 +4,10 @@
 <head>
   <meta charset="UTF-8">
   <title>Просмотр архива</title>
-  <script src="/assets/frameworks/jquery.min.js"></script>
-  <script src="/assets/frameworks/bootstrap.bundle.min.js"></script>
-  <link href="/assets/frameworks/bootstrap.min.css" rel="stylesheet">
-  <link href="/assets/style.css" rel="stylesheet">
+  <script src="{{ 'frameworks/jquery.min.js'|versioned_static }}"></script>
+  <script src="{{ 'frameworks/bootstrap.bundle.min.js'|versioned_static }}"></script>
+  <link href="{{ 'frameworks/bootstrap.min.css'|versioned_static }}" rel="stylesheet">
+  <link href="{{ 'style.css'|versioned_static }}" rel="stylesheet">
   <style>
     html,
     body {
@@ -291,7 +291,7 @@
     </div>
   </div>
 
-  <script src="/assets/archive_viewer.js"></script>
+  <script src="{{ 'archive_viewer.js'|versioned_static }}"></script>
 </body>
 
 </html>

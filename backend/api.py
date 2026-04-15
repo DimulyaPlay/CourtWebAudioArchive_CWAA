@@ -486,7 +486,13 @@ def get_record_data(record_id):
     return jsonify({
         'title': f"{record.case_number} — {record.audio_date.strftime('%d.%m.%Y %H:%M')}",
         'audio_url': audio_url,
-        'phrases': phrases
+        'phrases': phrases,
+        'is_in_recognition_queue': bool(
+            record.recognize_text and (
+                not record.recognized_text_path or
+                not os.path.exists(record.recognized_text_path)
+            )
+        )
     })
 
 
