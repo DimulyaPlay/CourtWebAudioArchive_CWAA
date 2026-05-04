@@ -13,9 +13,22 @@ views = Blueprint('views', __name__)
 
 ALLOWED_EXTENSIONS = {'mp3'}
 MIN_SIZE_BYTES = 3000  # 3 секунды в mp3 примерно столько (32000 битрейт ≈ 4кБ/сек)
+MIN_AUDIO_YEAR = 2020
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def parse_audio_timestamp(audio_date, audio_time):
+    try:
+        timestamp = datetime.strptime(f"{audio_date} {audio_time}", "%Y-%m-%d %H:%M")
+    except ValueError as exc:
+        raise ValueError("Неверный формат даты или времени.") from exc
+    if timestamp.year < MIN_AUDIO_YEAR:
+        raise ValueError("Дата проведения слишком ранняя.")
+    if timestamp.date() > datetime.now().date():
+        raise ValueError("Дата проведения не может быть из будущего.")
+    return timestamp
 
 @views.route('/', methods=['GET', 'POST'])
 def home_redirector(ajax=False):
@@ -71,11 +84,11 @@ def home_redirector(ajax=False):
                 return jsonify({'error': "Ошибка при обработке файла"}), 400
 
         try:
-            timestamp = datetime.strptime(f"{audio_date} {audio_time}", "%Y-%m-%d %H:%M")
-        except ValueError:
+            timestamp = parse_audio_timestamp(audio_date, audio_time)
+        except ValueError as exc:
             os.remove(temp_path)
             if ajax:
-                return jsonify({'error': "Неверный формат даты или времени."}), 400
+                return jsonify({'error': str(exc)}), 400
 
         base_path = config['closed_audio_path'] if closed_session else config['public_audio_path']
         user_folder_path = os.path.join(base_path, user_folder)
@@ -113,6 +126,20 @@ def home_redirector(ajax=False):
         record_id = None
         if not bool(closed_session):
             session = Session()
+            existing = session.query(AudioRecord).filter(
+                (AudioRecord.file_path == file_path) |
+                (
+                    (AudioRecord.user_folder == user_folder) &
+                    (AudioRecord.case_number == case_number) &
+                    (AudioRecord.audio_date == timestamp)
+                )
+            ).first()
+            if existing:
+                session.close()
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                if ajax:
+                    return jsonify({'error': "Такая аудиозапись уже есть в архиве."}), 400
             record = AudioRecord(
                 user_folder=user_folder,
                 case_number=case_number,

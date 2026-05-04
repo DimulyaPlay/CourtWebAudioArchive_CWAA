@@ -38,5 +38,17 @@ def patch_existing_db(engine):
             conn.execute(text("ALTER TABLE audio_records ADD COLUMN uploaded_ip TEXT"))
             conn.execute(text("UPDATE audio_records SET uploaded_ip = 'unknown'"))
 
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audio_records_audio_date ON audio_records (audio_date)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audio_records_case_number ON audio_records (case_number)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audio_records_user_folder ON audio_records (user_folder)"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_audio_records_recognition_queue "
+            "ON audio_records (recognize_text, recognized_text_path)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_download_logs_record_ip_timestamp "
+            "ON download_logs (record_id, ip, timestamp)"
+        ))
+
 Base.metadata.create_all(bind=engine)
 patch_existing_db(engine)

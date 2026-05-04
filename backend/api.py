@@ -12,7 +12,7 @@ from backend.recognition_orchestrator import (
 from . import config
 from backend.db import Session
 from backend.models import AudioRecord, DownloadLog
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 import zipfile
 import io
 from pathlib import Path
@@ -30,6 +30,7 @@ from array import array
 FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвертации одновременно
 WAVEFORM_PEAK_COUNT = 600
 WAVEFORM_SAMPLE_RATE = 8000
+MIN_AUDIO_YEAR = 2020
 
 
 api = Blueprint('api', __name__)
@@ -197,6 +198,10 @@ def _build_temp_asset_response(temp_path, source_name=None, date=None):
         'waveform_peaks': _get_or_build_waveform_peaks(temp_path, duration, file_size),
         'date': date
     }
+
+
+def _is_valid_audio_date(dt):
+    return MIN_AUDIO_YEAR <= dt.year and dt.date() <= datetime.now().date()
 
 
 def _normalize_segments(duration, trim_start, trim_end, cut_start, cut_end, mode):
@@ -378,7 +383,11 @@ def search_records():
                 pass
         else:
             if date_from:
-                query = query.filter(AudioRecord.audio_date >= date_from)
+                try:
+                    start_dt = datetime.strptime(date_from, "%Y-%m-%d")
+                    query = query.filter(AudioRecord.audio_date >= start_dt)
+                except ValueError:
+                    pass
             if date_to:
                 try:
                 # Добавляем +1 день к date_to, чтобы включить его полностью
@@ -522,7 +531,10 @@ def get_vr_queue_len():
     with Session() as session:
         count = session.query(AudioRecord).filter(
             AudioRecord.recognize_text.is_(True),
-            AudioRecord.recognized_text_path.is_(None)
+            or_(
+                AudioRecord.recognized_text_path.is_(None),
+                AudioRecord.recognized_text_path == ''
+            )
         ).count()
     return jsonify({'records_to_vr': count})
 
@@ -612,7 +624,7 @@ def convert_case():
         return jsonify(_build_temp_asset_response(
             final_tmp,
             source_name=base_name,
-            date=dt.strftime("%Y-%m-%d")
+            date=dt.strftime("%Y-%m-%d") if _is_valid_audio_date(dt) else None
         ))
 
 

@@ -3,6 +3,7 @@ import time
 import shutil
 import traceback
 import re
+from sqlalchemy import or_
 from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
@@ -105,7 +106,10 @@ def run_orchestrator_loop():
             # 1) Берём записи из БД, которые надо распознать (ограничиваем пачку)
             records = session.query(AudioRecord).filter(
                 AudioRecord.recognize_text == True,
-                AudioRecord.recognized_text_path == None
+                or_(
+                    AudioRecord.recognized_text_path == None,
+                    AudioRecord.recognized_text_path == ''
+                )
             ).limit(MAX_PENDING_FILES).all()
             if not records:
                 time.sleep(CHECK_INTERVAL_SECONDS)

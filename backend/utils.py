@@ -13,6 +13,7 @@ TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
 os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
 FILE_LIFETIME_SECONDS = 3600  # 1 час
 CHECK_INTERVAL_SECONDS = 300  # каждые 5 минут
+MIN_AUDIO_YEAR = 2020
 version = "2.3"
 
 
@@ -107,6 +108,10 @@ def compare_files(file1, file2):
     return file1_hash == file2_hash
 
 
+def is_valid_audio_datetime(dt):
+    return MIN_AUDIO_YEAR <= dt.year and dt.date() <= datetime.now().date()
+
+
 def is_file_fully_copied(file_path, check_interval=2, retries=5):
     """Проверяет, завершено ли копирование файла, отслеживая изменение размера."""
     for _ in range(retries):
@@ -173,11 +178,20 @@ def scan_and_populate_database(base_path: str, user_folder: str):
                 dt = datetime.strptime(date_part, "%Y-%m-%d_%H-%M")
             except ValueError:
                 continue
+            if not is_valid_audio_datetime(dt):
+                continue
 
             file_path = os.path.join(root, file)
             case_number = os.path.basename(os.path.dirname(file_path))
 
-            exists = session.query(AudioRecord).filter_by(file_path=file_path).first()
+            exists = session.query(AudioRecord).filter(
+                (AudioRecord.file_path == file_path) |
+                (
+                    (AudioRecord.user_folder == user_folder) &
+                    (AudioRecord.case_number == case_number) &
+                    (AudioRecord.audio_date == dt)
+                )
+            ).first()
             if exists:
                 continue
 

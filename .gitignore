@@ -11,3 +11,5 @@
 /courtrooms.txt
 /import_sources.txt
 /GigaAM_ASR/
+/audio_archive.db-shm
+/audio_archive.db-wal
