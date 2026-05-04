@@ -442,6 +442,18 @@
         formChanged = true;
       }
 
+      function normalizeFemidaDisplayName(value) {
+        const text = String(value || '');
+        const withPercentEscapes = text.replace(/@([0-9a-fA-F]{2})/g, '%$1');
+        try {
+          return decodeURIComponent(withPercentEscapes);
+        } catch (e) {
+          return withPercentEscapes.replace(/%([0-9a-fA-F]{2})/g, function (_, hex) {
+            return String.fromCharCode(parseInt(hex, 16));
+          });
+        }
+      }
+
       function getTodayIsoDate() {
         const now = new Date();
         const offsetMs = now.getTimezoneOffset() * 60000;
@@ -497,7 +509,7 @@
           id: `src_${Date.now()}_${Math.random().toString(16).slice(2)}`,
           temp_id: asset.temp_id,
           temp_url: asset.temp_url,
-          name: asset.name,
+          name: normalizeFemidaDisplayName(asset.name),
           file_size: Number(asset.file_size || 0),
           waveformPeaks: Array.isArray(asset.waveform_peaks)
             ? asset.waveform_peaks.map(value => Number(value) || 0)
@@ -785,32 +797,31 @@
         const segmentHtml = finalTimelineState.segments.map(segment => {
           const width = finalTimelineState.totalDuration ? (segment.duration / finalTimelineState.totalDuration) * 100 : 0;
           const label = `${segment.sourceName}: ${formatSeconds(segment.duration)}`;
-          return `
-            <button
-              class="final-timeline-segment"
-              type="button"
-              data-output-start="${segment.outputStart}"
-              data-duration="${segment.duration}"
-              title="${label}"
-              style="width:${width}%; background:${segment.color}; --segment-soft:${segment.softColor};"
-            ></button>
-          `;
-        }).join('');
-        finalTimelineBar.html(`${segmentHtml}<div class="final-timeline-playhead"></div>`);
+          return $('<button>')
+            .addClass('final-timeline-segment')
+            .attr('type', 'button')
+            .attr('title', label)
+            .attr('data-output-start', segment.outputStart)
+            .attr('data-duration', segment.duration)
+            .css({
+              width: `${width}%`,
+              background: segment.color,
+              '--segment-soft': segment.softColor
+            })[0];
+        });
+        finalTimelineBar.empty().append(segmentHtml, '<div class="final-timeline-playhead"></div>');
 
         const legendItems = [];
         const seenSources = new Set();
         finalTimelineState.segments.forEach(segment => {
           if (seenSources.has(segment.sourceId)) return;
           seenSources.add(segment.sourceId);
-          legendItems.push(`
-            <div class="final-timeline-legend-item">
-              <span class="final-timeline-legend-color" style="background:${segment.color};"></span>
-              <span>${segment.sourceName}</span>
-            </div>
-          `);
+          const item = $('<div>').addClass('final-timeline-legend-item');
+          item.append($('<span>').addClass('final-timeline-legend-color').css('background', segment.color));
+          item.append($('<span>').text(segment.sourceName));
+          legendItems.push(item[0]);
         });
-        $('#final-timeline-legend').html(legendItems.join(''));
+        $('#final-timeline-legend').empty().append(legendItems);
         updateFinalTimelinePlaybackUI();
       }
 
@@ -913,8 +924,8 @@
             <div class="audio-source-item ${activeClass}" draggable="true" data-id="${source.id}">
               <div class="audio-source-handle" title="Перетащите для изменения порядка"><i class="bi bi-list"></i></div>
               <div class="audio-source-meta">
-                <div class="audio-source-title">${index + 1}. ${source.name}</div>
-                <div class="audio-source-summary">${summarizeSource(source)}</div>
+                <div class="audio-source-title"></div>
+                <div class="audio-source-summary"></div>
               </div>
               <div class="audio-source-actions">
                 <span class="badge text-bg-light">${formatSeconds(source.duration)}</span>
@@ -923,6 +934,8 @@
               </div>
             </div>
           `);
+          item.find('.audio-source-title').text(`${index + 1}. ${source.name}`);
+          item.find('.audio-source-summary').text(summarizeSource(source));
           list.append(item);
         });
         renderFinalTimeline();
@@ -1593,7 +1606,8 @@
         $.getJSON('/api/import_sources', function (data) {
           const select = $('#femida-courtroom').empty().append('<option value="">Выберите зал...</option>');
           data.forEach(item => {
-            select.append(`<option value="${item.path}" data-name="${item.name}">${item.name}</option>`);
+            const displayName = normalizeFemidaDisplayName(item.name);
+            select.append($('<option>').val(item.path).attr('data-name', displayName).text(displayName));
           });
         });
       });
@@ -1609,7 +1623,13 @@
             list.append('<div class="text-muted px-2 py-1">Нет записей</div>');
           } else {
             entries.forEach(name => {
-              list.append(`<div class="list-group-item femida-case" data-path="${path}/${name}" data-name="${name}">${name}</div>`);
+              const displayName = normalizeFemidaDisplayName(name);
+              $('<div>')
+                .addClass('list-group-item femida-case')
+                .attr('data-path', `${path}/${name}`)
+                .attr('data-name', displayName)
+                .text(displayName)
+                .appendTo(list);
             });
           }
         });
