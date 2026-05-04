@@ -36,6 +36,58 @@ MIN_AUDIO_YEAR = 2020
 api = Blueprint('api', __name__)
 
 
+def _normalize_femida_display_name(value):
+    text = str(value or '')
+    text = re.sub(r'[@$]([0-9a-fA-F]{2})', r'%\1', text)
+
+    try:
+        from urllib.parse import unquote
+        return unquote(text)
+    except Exception:
+        return re.sub(
+            r'%([0-9a-fA-F]{2})',
+            lambda match: chr(int(match.group(1), 16)),
+            text
+        )
+
+
+def _load_import_source_paths():
+    paths = []
+    if os.path.exists('import_sources.txt'):
+        with open('import_sources.txt', 'r', encoding='utf-8') as f:
+            for line in f:
+                if '|' in line:
+                    _, path = line.strip().split('|', 1)
+                    if os.path.isdir(path):
+                        paths.append(path)
+    return paths
+
+
+def _resolve_femida_case_path(case_path):
+    if not case_path or os.path.isdir(case_path):
+        return case_path
+
+    normalized_request = os.path.normpath(case_path)
+    for base in _load_import_source_paths():
+        normalized_base = os.path.normpath(base)
+        try:
+            if os.path.commonpath([normalized_request, normalized_base]) != normalized_base:
+                continue
+        except ValueError:
+            continue
+
+        for name in os.listdir(base):
+            full_path = os.path.join(base, name)
+            if not os.path.isdir(full_path):
+                continue
+
+            display_path = os.path.normpath(os.path.join(base, _normalize_femida_display_name(name)))
+            if display_path == normalized_request:
+                return full_path
+
+    return case_path
+
+
 def _json_error(message, status=400):
     return jsonify({'error': message}), status
 
@@ -563,13 +615,13 @@ def list_cases_in_folder():
         if os.path.isdir(full_path):
             entries.append((name, os.path.getmtime(full_path)))
     entries.sort(key=lambda x: -x[1])  # от новых к старым
-    return jsonify([e[0] for e in entries])
+    return jsonify([_normalize_femida_display_name(e[0]) for e in entries])
 
 
 @api.route('/convert_case', methods=['POST'])
 def convert_case():
     with FFMPEG_SEMAPHORE:
-        case_path = request.form.get('path')
+        case_path = _resolve_femida_case_path(request.form.get('path'))
         if not case_path or not os.path.isdir(case_path):
             return jsonify({'error': 'invalid path'}), 400
         # Группировка по каналам
