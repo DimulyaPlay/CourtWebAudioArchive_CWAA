@@ -444,7 +444,7 @@
 
       function normalizeFemidaDisplayName(value) {
         const text = String(value || '');
-        const withPercentEscapes = text.replace(/@([0-9a-fA-F]{2})/g, '%$1');
+        const withPercentEscapes = text.replace(/[@$]([0-9a-fA-F]{2})/g, '%$1');
         try {
           return decodeURIComponent(withPercentEscapes);
         } catch (e) {
