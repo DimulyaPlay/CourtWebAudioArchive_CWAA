@@ -4,6 +4,8 @@ from PySide2.QtWidgets import (
 )
 from PySide2.QtCore import Qt, QTime
 from . import config
+from .db import checkpoint_wal, sqlite_backup_snapshot
+from contextlib import ExitStack
 import os
 import zipfile
 import datetime
@@ -214,11 +216,6 @@ class BackupSettingsWindow(QWidget):
         archive_path = os.path.join(backup_folder, f"backup_{timestamp}.zip")
 
         include_paths = []
-        if self.include_db.isChecked():
-            db_path = os.path.abspath("audio_archive.db")
-            if os.path.exists(db_path):
-                include_paths.append((db_path, "audio_archive.db"))
-
         if self.include_public.isChecked():
             include_paths.append((config['public_audio_path'], "public_audio"))
 
@@ -226,25 +223,37 @@ class BackupSettingsWindow(QWidget):
             include_paths.append((config['closed_audio_path'], "closed_audio"))
 
         try:
-            all_files = []
-            for src, arcname in include_paths:
-                if os.path.isdir(src):
-                    for root, _, files in os.walk(src):
-                        for file in files:
-                            full_path = os.path.join(root, file)
-                            rel_path = os.path.relpath(full_path, src)
-                            all_files.append((full_path, os.path.join(arcname, rel_path)))
-                elif os.path.isfile(src):
-                    all_files.append((src, arcname))
+            with ExitStack() as stack:
+                if self.include_db.isChecked():
+                    db_path = os.path.abspath("audio_archive.db")
+                    if os.path.exists(db_path):
+                        snapshot_path = os.path.join(backup_folder, f"_audio_archive_snapshot_{timestamp}.db")
+                        db_snapshot = stack.enter_context(sqlite_backup_snapshot(snapshot_path))
+                        include_paths.insert(0, (db_snapshot, "audio_archive.db"))
 
-            total_files = len(all_files)
-            progress = 0
+                all_files = []
+                for src, arcname in include_paths:
+                    if os.path.isdir(src):
+                        for root, _, files in os.walk(src):
+                            for file in files:
+                                full_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(full_path, src)
+                                all_files.append((full_path, os.path.join(arcname, rel_path)))
+                    elif os.path.isfile(src):
+                        all_files.append((src, arcname))
 
-            with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for full_path, arcname in all_files:
-                    zipf.write(full_path, arcname)
-                    progress += 1
-                    self.progress_bar.setValue(int(progress / total_files * 100))
+                total_files = len(all_files)
+                progress = 0
+
+                with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for full_path, arcname in all_files:
+                        zipf.write(full_path, arcname)
+                        progress += 1
+                        if total_files:
+                            self.progress_bar.setValue(int(progress / total_files * 100))
+
+            if self.include_db.isChecked():
+                checkpoint_wal('TRUNCATE')
 
             self.status_label.setText("✅ Бэкап завершён.")
         except Exception as e:
