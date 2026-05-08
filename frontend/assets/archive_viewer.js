@@ -2,8 +2,14 @@
   const REPLACE_TAG_RE = /<replace><old>([\s\S]*?)<\/old><new>([\s\S]*?)<\/new><rule>(\d+)<\/rule><\/replace>/gi;
   const SCROLL_RESET_MS = 2000;
   const QUEUE_POLL_MS = 30000;
-  const EMPTY_TRANSCRIPT_TEXT = 'Выберите аудиозапись для просмотра протокола';
-  const NO_TRANSCRIPT_TEXT = 'У выбранной записи отсутствует протокол.';
+  const RECOGNITION_ENABLED = window.CWAA_RECOGNITION_ENABLED !== false;
+  const RECOGNITION_DISABLED_TEXT = 'Распознавание отключено на сервере.';
+  const EMPTY_TRANSCRIPT_TEXT = RECOGNITION_ENABLED
+    ? 'Выберите аудиозапись для просмотра протокола'
+    : RECOGNITION_DISABLED_TEXT;
+  const NO_TRANSCRIPT_TEXT = RECOGNITION_ENABLED
+    ? 'У выбранной записи отсутствует протокол.'
+    : RECOGNITION_DISABLED_TEXT;
   const QUEUED_TRANSCRIPT_TEXT = 'Протокол находится в очереди распознавания, откройте эту страницу через несколько минут';
 
   const ui = {
@@ -84,11 +90,29 @@
     );
   }
 
+  function appendRecognitionDisabledNotice(target) {
+    if (!RECOGNITION_ENABLED) {
+      $('<p>')
+        .addClass('text-muted text-center mb-3')
+        .text(RECOGNITION_DISABLED_TEXT)
+        .appendTo(target);
+    }
+  }
+
+  function appendTranscriptWarning(message) {
+    if (message) {
+      $('<div>')
+        .addClass('alert alert-warning py-2 mb-3')
+        .text(message)
+        .appendTo(ui.transcriptBox);
+    }
+  }
+
   function setActionButtons(recordId) {
     const hasRecord = Boolean(recordId);
     ui.downloadTextBtn.toggle(hasRecord).data('id', recordId || null);
-    ui.retranscribeBtn.toggle(hasRecord).data('id', recordId || null);
-    ui.reapplyRulesBtn.toggle(hasRecord).data('id', recordId || null);
+    ui.retranscribeBtn.toggle(RECOGNITION_ENABLED && hasRecord).data('id', recordId || null);
+    ui.reapplyRulesBtn.toggle(RECOGNITION_ENABLED && hasRecord).data('id', recordId || null);
   }
 
   function showToast(message, title) {
@@ -460,9 +484,17 @@
     ui.currentTime.textContent = '0:00';
     ui.duration.textContent = '0:00';
     ui.transcriptBox.empty().scrollTop(0);
+    appendRecognitionDisabledNotice(ui.transcriptBox);
+    appendTranscriptWarning(data.audio_error);
 
     if (!state.phrases.length) {
-      setEmptyTranscript(data.is_in_recognition_queue ? QUEUED_TRANSCRIPT_TEXT : NO_TRANSCRIPT_TEXT);
+      if (data.audio_error) {
+        return;
+      } else if (RECOGNITION_ENABLED && data.is_in_recognition_queue) {
+        setEmptyTranscript(QUEUED_TRANSCRIPT_TEXT);
+      } else if (RECOGNITION_ENABLED) {
+        setEmptyTranscript(NO_TRANSCRIPT_TEXT);
+      }
       return;
     }
 
@@ -653,7 +685,9 @@
     ui.recordList.find('.list-group-item').removeClass('record-active');
     item.addClass('record-active');
     setActionButtons(recordId);
-    showOnboardingOnce();
+    if (RECOGNITION_ENABLED) {
+      showOnboardingOnce();
+    }
     loadRecord(recordId);
   });
 
@@ -708,7 +742,7 @@
     const selection = window.getSelection();
     const selectedText = selection ? selection.toString().trim() : '';
 
-    if (!selectedText || !selection.rangeCount) {
+    if (!RECOGNITION_ENABLED || !selectedText || !selection.rangeCount) {
       ui.selectionPopover.hide();
       return;
     }
@@ -766,6 +800,10 @@
   });
 
   ui.reapplyRulesBtn.on('click', function () {
+    if (!RECOGNITION_ENABLED) {
+      return;
+    }
+
     if (!state.currentRecordId) {
       showToast('ID записи не определён', 'Ошибка');
       return;
@@ -865,13 +903,13 @@
   });
 
   ui.retranscribeBtn.on('click', function () {
-    if (state.currentRecordId) {
+    if (RECOGNITION_ENABLED && state.currentRecordId) {
       modals.retranscribe.show();
     }
   });
 
   $('#confirmRetranscribe').on('click', function () {
-    if (!state.currentRecordId) {
+    if (!RECOGNITION_ENABLED || !state.currentRecordId) {
       return;
     }
 
@@ -969,7 +1007,11 @@
     }
   });
 
-  updateQueueCounter();
-  window.setInterval(updateQueueCounter, QUEUE_POLL_MS);
+  if (RECOGNITION_ENABLED) {
+    updateQueueCounter();
+    window.setInterval(updateQueueCounter, QUEUE_POLL_MS);
+  } else {
+    ui.queueCounter.hide();
+  }
   resetViewerState();
 })();

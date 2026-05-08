@@ -64,13 +64,15 @@
           rows="2"></textarea>
       </div>
 
-      <div class="form-check mb-0">
-        <input class="form-check-input" id="recognize_text" name="recognize_text" type="checkbox">
+      {% if recognize_text_enabled %}
+      <div class="form-check mb-0" title="Если включено, открытая запись будет поставлена в очередь распознавания после загрузки. Для закрытых заседаний распознавание не используется.">
+        <input class="form-check-input" id="recognize_text" name="recognize_text" type="checkbox" {% if recognize_text_default %}checked{% endif %}>
         <label class="form-check-label" for="recognize_text">Перевести аудио в текст (не работает для закрытых с.з.).</label>
       </div>
       <div class="mb-2">
         <small class="text-muted" id="vrQueueInfo">Протоколов в очереди: ?</small>
       </div>
+      {% endif %}
 
       <div class="form-check mb-2">
         <input class="form-check-input" id="closed_session" name="closed_session" type="checkbox">
@@ -1307,12 +1309,16 @@
       }
 
       function updateVRQueueInfo() {
+        if (!window.CWAA_RECOGNITION_ENABLED) {
+          return;
+        }
         fetch('/api/get_vr_queue_len')
           .then(res => res.json())
           .then(data => $('#vrQueueInfo').text(`Протоколов в очереди: ${data.records_to_vr}`))
           .catch(() => $('#vrQueueInfo').text('Протоколов в очереди: ошибка загрузки'));
       }
 
+      window.CWAA_RECOGNITION_ENABLED = {{ 'true' if recognize_text_enabled else 'false' }};
       $('#audio_date').attr('max', getTodayIsoDate());
       $('#audio_date').on('change input', validateAudioDate);
 

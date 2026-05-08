@@ -68,6 +68,8 @@ def read_create_config():
         "public_audio_path": "",
         "closed_audio_path": "",
         "recognize_text_from_audio_path": '',
+        'recognize_text_enabled': 'true',
+        'recognize_text_default': 'false',
         'create_year_subfolders': 'false'
     }
     config = default_configuration.copy()
@@ -186,9 +188,11 @@ def scan_and_populate_database(base_path: str, user_folder: str):
 
             file_path = os.path.join(root, file)
             case_number = os.path.basename(os.path.dirname(file_path))
+            from backend.path_resolver import absolute_to_relative_path
+            record_file_path = absolute_to_relative_path(file_path) or file_path
 
             exists = session.query(AudioRecord).filter(
-                (AudioRecord.file_path == file_path) |
+                (AudioRecord.file_path.in_([file_path, record_file_path])) |
                 (
                     (AudioRecord.user_folder == user_folder) &
                     (AudioRecord.case_number == case_number) &
@@ -203,7 +207,7 @@ def scan_and_populate_database(base_path: str, user_folder: str):
                 case_number=case_number,
                 audio_date=dt,
                 recognize_text=True,
-                file_path=file_path,
+                file_path=record_file_path,
                 comment='(добавлено через сканирование)',
                 courtroom=None
             )
@@ -212,7 +216,7 @@ def scan_and_populate_database(base_path: str, user_folder: str):
 
             txt_path = os.path.splitext(file_path)[0] + '.txt'
             if os.path.exists(txt_path):
-                record.recognized_text_path = txt_path
+                record.recognized_text_path = absolute_to_relative_path(txt_path) or txt_path
                 indexed_records.append((record.id, txt_path))
 
             new_records += 1

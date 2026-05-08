@@ -1,6 +1,8 @@
 server_ip=10.59.56.189
 server_port=446
-public_audio_path=C:\Users\CourtUser\Desktop\test
+public_audio_path=\\SRSFEMIDA\АУДИОПРОТОКОЛЫ
 closed_audio_path=C:\Users\CourtUser\Desktop\test
 recognize_text_from_audio_path=C:\Users\CourtUser\Desktop\test
+recognize_text_enabled=true
+recognize_text_default=true
 create_year_subfolders=false

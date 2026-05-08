@@ -5,7 +5,7 @@ from PySide2.QtGui import QIcon
 import time
 from backend import create_app, config
 from backend.utils import save_config, get_all_public_ips, cleanup_old_mp3_files, version, TEMP_MP3_FOLDER
-from backend.recognition_orchestrator import run_orchestrator_loop
+from backend.recognition_orchestrator import get_asr_executable_path, has_asr_executable, run_orchestrator_loop
 from waitress import create_server
 import subprocess
 from string import Template
@@ -14,10 +14,10 @@ import threading
 import psutil
 from PySide2.QtWidgets import (QStyleFactory,
     QMainWindow, QApplication, QPushButton, QLabel, QVBoxLayout, QWidget, QLineEdit, QFormLayout, QMessageBox,
-    QComboBox, QSystemTrayIcon, QMenu, QAction, QCheckBox, QListWidget, QHBoxLayout, QTableWidget, QTableWidgetItem, QFileDialog)
+    QComboBox, QSystemTrayIcon, QMenu, QAction, QCheckBox, QListWidget, QHBoxLayout, QTableWidget, QTableWidgetItem,
+    QFileDialog, QTextEdit, QAbstractItemView)
 import sys
 import socket
-import urllib.request
 from backend.backup_service import BackupSettingsWindow
 
 
@@ -120,17 +120,30 @@ def _find_internal_port(external_port):
     raise RuntimeError("Не найден свободный внутренний порт для Waitress")
 
 
-def _wait_for_http(url, timeout=15):
+def _http_health_check(host, port, path="/healthz", request_timeout=0.25):
+    with socket.create_connection((host, int(port)), timeout=request_timeout) as sock:
+        sock.settimeout(request_timeout)
+        request = (
+            f"GET {path} HTTP/1.0\r\n"
+            f"Host: {host}:{port}\r\n"
+            "Connection: close\r\n"
+            "\r\n"
+        ).encode("ascii")
+        sock.sendall(request)
+        response = sock.recv(128)
+    return response.startswith(b"HTTP/1.") and b" 200 " in response[:32]
+
+
+def _wait_for_http(host, port, timeout=8, request_timeout=0.25, interval=0.1, path="/healthz"):
     deadline = time.time() + timeout
     last_error = None
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
-                if 200 <= response.status < 500:
-                    return True, ""
+            if _http_health_check(host, port, path=path, request_timeout=request_timeout):
+                return True, ""
         except Exception as e:
             last_error = e
-        time.sleep(0.5)
+        time.sleep(interval)
     return False, str(last_error or "нет ответа")
 
 
@@ -165,20 +178,27 @@ def start_nginx():
         nginx_exe = os.path.join('nginx', 'nginx.exe')
         if not os.path.exists(nginx_exe):
             return 1, f"start_nginx: не найден {nginx_exe}"
+        stage_time = time.perf_counter()
         test = subprocess.run(
             [nginx_exe, '-t', '-c', os.path.abspath('nginx_dynamic.conf')],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
+        print(f"[startup] nginx -t: {time.perf_counter() - stage_time:.2f}s")
         if test.returncode != 0:
             print(f"start_nginx -t: {test.stderr or test.stdout}")
             return 1, "start_nginx: nginx_dynamic.conf не прошел проверку"
         stdout = open(os.path.join('logs', 'nginx_stdout.log'), 'a', buffering=1)
         stderr = open(os.path.join('logs', 'nginx_stderr.log'), 'a', buffering=1)
+        stage_time = time.perf_counter()
         proc = subprocess.Popen(
             [nginx_exe, '-c', os.path.abspath('nginx_dynamic.conf')],
             stdout=stdout, stderr=stderr
         )
-        time.sleep(2)
+        try:
+            proc.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            pass
+        print(f"[startup] nginx process start: {time.perf_counter() - stage_time:.2f}s")
         if proc.poll() is not None:
             print("start_nginx: процесс nginx завершился сразу после запуска")
             return 1, "start_nginx: см. logs/nginx_stderr.log"
@@ -259,6 +279,7 @@ class ServerManager:
         return th
 
     def start(self, server_ip, external_port):
+        start_time = time.perf_counter()
         self.service_status = "starting"
         self.last_exit_reason = None
         self.stop_event = threading.Event()
@@ -267,14 +288,19 @@ class ServerManager:
         internal_port = _find_internal_port(external_port)
         self.internal_port = internal_port
         try:
+            stage_time = time.perf_counter()
             app = self._bootstrap_app()
+            print(f"[startup] Flask bootstrap: {time.perf_counter() - stage_time:.2f}s")
             self.flask_app = app
             print("Flask App создан:", app)
+            stage_time = time.perf_counter()
             self._start_waitress(app, internal_port)
-            ok, detail = _wait_for_http(f"http://127.0.0.1:{internal_port}/healthz", timeout=20)
+            ok, detail = _wait_for_http("127.0.0.1", internal_port, timeout=8)
             if not ok:
                 raise RuntimeError(f"Waitress не отвечает на health-check: {detail}")
+            print(f"[startup] Waitress health-check: {time.perf_counter() - stage_time:.2f}s")
 
+            stage_time = time.perf_counter()
             res, msg = generate_nginx_config(server_ip, external_port, internal_port)
             if res:
                 raise RuntimeError(msg)
@@ -282,17 +308,26 @@ class ServerManager:
             if result[0]:
                 raise RuntimeError(result[1])
             self.nginx_process = result[2]
-            ok, detail = _wait_for_http(f"http://{server_ip}:{external_port}/healthz", timeout=20)
+            nginx_health_time = time.perf_counter()
+            ok, detail = _wait_for_http(server_ip, external_port, timeout=8)
             if not ok:
                 raise RuntimeError(f"Nginx не отвечает на health-check: {detail}")
+            print(f"[startup] Nginx health-check: {time.perf_counter() - nginx_health_time:.2f}s")
+            print(f"[startup] Nginx config/start/health-check: {time.perf_counter() - stage_time:.2f}s")
 
+            stage_time = time.perf_counter()
             recognize_path = config.get('recognize_text_from_audio_path')
-            if recognize_path and os.path.exists(recognize_path):
+            recognition_enabled = config.get('recognize_text_enabled', 'true') == 'true'
+            if recognition_enabled and recognize_path and os.path.exists(recognize_path) and has_asr_executable():
                 self._start_thread('orchestrator', run_orchestrator_loop, (self.stop_event,))
+            elif recognition_enabled and not has_asr_executable():
+                print(f"[ASR] Не найден исполняемый файл: {get_asr_executable_path()}. Поток распознавания не запущен.")
             else:
                 print('Папка распознавания не настроена — оркестратор распознавания отключен.')
             self._start_thread('cleanup_mp3', cleanup_old_mp3_files, (self.stop_event,))
+            print(f"[startup] Background services: {time.perf_counter() - stage_time:.2f}s")
             self.service_status = "running"
+            print(f"[startup] Total: {time.perf_counter() - start_time:.2f}s")
             return True, ""
         except Exception as e:
             traceback.print_exc()
@@ -338,6 +373,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.manager = ServerManager()
         self.backup_window = None
+        self.path_migration_window = None
+        self.duplicate_resolver_window = None
         self.monitor_thread = None
         self.orchestrator_thread = None
         self.cleanup_thread = None
@@ -372,11 +409,23 @@ class MainWindow(QMainWindow):
         self.closed_audio_path_input.setPlaceholderText('C:\\папка\\еще папка')
         self.recognize_text_from_audio_path_input = QLineEdit(config['recognize_text_from_audio_path'])
         self.recognize_text_from_audio_path_input.setPlaceholderText('C:\\папка\\еще папка')
+        self.recognize_text_enabled = QCheckBox()
+        self.recognize_text_enabled.setChecked(config.get('recognize_text_enabled', 'true') == 'true')
+        self.recognize_text_enabled.setToolTip(
+            'Показывает чекбокс распознавания в форме архивации и включает очередь распознавания в архиве.'
+        )
+        self.recognize_text_default = QCheckBox()
+        self.recognize_text_default.setChecked(config.get('recognize_text_default', 'false') == 'true')
+        self.recognize_text_default.setToolTip(
+            'Если распознавание включено, чекбокс "Перевести аудио в текст" на странице архивации будет отмечен заранее.'
+        )
         self.create_year_subfolders = QCheckBox()
         self.create_year_subfolders.setChecked(config['create_year_subfolders']=='true')
         form_layout.addRow("Выберите IP для размещения сервера:", self.server_ip_combo)
         form_layout.addRow("Введите номер порта для размещения сервера:", self.server_port_input)
         form_layout.addRow('Создавать подпапки по годам в папках судей', self.create_year_subfolders)
+        form_layout.addRow('Распознавать записи в текст', self.recognize_text_enabled)
+        form_layout.addRow('Распознавать записи по умолчанию', self.recognize_text_default)
         form_layout.addRow("Путь хранения открытых аудиопротоколов:", self.public_audio_path_input)
         form_layout.addRow("Путь хранения закрытых аудиопротоколов:", self.closed_audio_path_input)
         form_layout.addRow('Путь для распознавания аудиопротоколов:', self.recognize_text_from_audio_path_input)
@@ -399,6 +448,11 @@ class MainWindow(QMainWindow):
         self.courtroom_button = QPushButton("🏛 Управление залами")
         self.courtroom_button.clicked.connect(self.open_courtroom_manager)
 
+        self.path_migration_button = QPushButton("🧭 Миграция путей аудиоархива")
+        self.path_migration_button.clicked.connect(self.open_path_migration)
+        self.duplicate_resolver_button = QPushButton("🧩 Разрешение дублей записей")
+        self.duplicate_resolver_button.clicked.connect(self.open_duplicate_resolver)
+
         # Основной layout
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
@@ -410,6 +464,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.scan_button)
         layout.addWidget(self.backup_button)
         layout.addWidget(self.courtroom_button)
+        layout.addWidget(self.path_migration_button)
+        layout.addWidget(self.duplicate_resolver_button)
         layout.addWidget(self.save_button)
         container = QWidget()
         container.setLayout(layout)
@@ -453,6 +509,16 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'courtroom_window') or self.courtroom_window is None:
             self.courtroom_window = CourtroomManagerWindow()
         self.courtroom_window.show()
+
+    def open_path_migration(self):
+        if not self.path_migration_window:
+            self.path_migration_window = PathMigrationWindow()
+        self.path_migration_window.show()
+
+    def open_duplicate_resolver(self):
+        if not self.duplicate_resolver_window:
+            self.duplicate_resolver_window = DuplicateResolverWindow()
+        self.duplicate_resolver_window.show()
 
     def start_server(self):
         try:
@@ -530,10 +596,14 @@ class MainWindow(QMainWindow):
         self.stop_action.setEnabled(False)
         self.firewall_button.setEnabled(False)
         self.create_year_subfolders.setEnabled(False)
+        self.recognize_text_enabled.setEnabled(False)
+        self.recognize_text_default.setEnabled(False)
         self.recognize_text_from_audio_path_input.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.backup_button.setEnabled(False)
         self.courtroom_button.setEnabled(False)
+        self.path_migration_button.setEnabled(False)
+        self.duplicate_resolver_button.setEnabled(False)
 
     def set_running_state(self):
         self.update_status("Запущен")
@@ -551,10 +621,14 @@ class MainWindow(QMainWindow):
         self.save_button.setEnabled(False)
         self.firewall_button.setEnabled(False)
         self.create_year_subfolders.setEnabled(False)
+        self.recognize_text_enabled.setEnabled(False)
+        self.recognize_text_default.setEnabled(False)
         self.recognize_text_from_audio_path_input.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.backup_button.setEnabled(False)
         self.courtroom_button.setEnabled(False)
+        self.path_migration_button.setEnabled(False)
+        self.duplicate_resolver_button.setEnabled(False)
 
     def set_stopping_state(self):
         self.update_status("Останавливается...")
@@ -581,10 +655,14 @@ class MainWindow(QMainWindow):
         self.stop_action.setEnabled(False)
         self.firewall_button.setEnabled(True)
         self.create_year_subfolders.setEnabled(True)
+        self.recognize_text_enabled.setEnabled(True)
+        self.recognize_text_default.setEnabled(True)
         self.recognize_text_from_audio_path_input.setEnabled(True)
         self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
         self.backup_button.setEnabled(True)
         self.courtroom_button.setEnabled(True)
+        self.path_migration_button.setEnabled(True)
+        self.duplicate_resolver_button.setEnabled(True)
 
     def monitor_services(self, signal_error, stop_event):
         """Функция для отслеживания процессов nginx и flask"""
@@ -643,10 +721,14 @@ class MainWindow(QMainWindow):
         self.stop_action.setEnabled(False)
         self.firewall_button.setEnabled(True)
         self.create_year_subfolders.setEnabled(True)
+        self.recognize_text_enabled.setEnabled(True)
+        self.recognize_text_default.setEnabled(True)
         self.recognize_text_from_audio_path_input.setEnabled(True)
         self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
         self.backup_button.setEnabled(True)
         self.courtroom_button.setEnabled(True)
+        self.path_migration_button.setEnabled(True)
+        self.duplicate_resolver_button.setEnabled(True)
 
     def save_config(self):
         global config
@@ -668,6 +750,8 @@ class MainWindow(QMainWindow):
         config['public_audio_path'] = public_audio_path
         config['closed_audio_path'] = closed_audio_path
         config['recognize_text_from_audio_path'] = self.recognize_text_from_audio_path_input.text().replace('"', '')
+        config['recognize_text_enabled'] = "true" if self.recognize_text_enabled.isChecked() else 'false'
+        config['recognize_text_default'] = "true" if self.recognize_text_default.isChecked() else 'false'
         config['create_year_subfolders'] = "true" if self.create_year_subfolders.isChecked() else 'false'
         save_config(config)
         self.update_app_link()
@@ -718,6 +802,229 @@ class MainWindow(QMainWindow):
     def exit_application(self):
         self.manager.stop()
         sys.exit(0)
+
+
+class PathMigrationWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Миграция путей аудиоархива")
+        self.setMinimumSize(620, 420)
+
+        self.summary_label = QLabel(
+            "Проверка найдет абсолютные пути в базе, которые находятся внутри текущих "
+            "public_audio_path/closed_audio_path, и может заменить их на относительные."
+        )
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+
+        self.check_button = QPushButton("Проверить без изменений")
+        self.migrate_button = QPushButton("Выполнить миграцию")
+        self.close_button = QPushButton("Закрыть")
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.check_button)
+        buttons.addWidget(self.migrate_button)
+        buttons.addWidget(self.close_button)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.summary_label)
+        layout.addWidget(self.output)
+        layout.addLayout(buttons)
+        self.setLayout(layout)
+
+        self.check_button.clicked.connect(self.check_paths)
+        self.migrate_button.clicked.connect(self.migrate_paths)
+        self.close_button.clicked.connect(self.close)
+
+    def _format_result(self, result, dry_run):
+        mode = "Проверка" if dry_run else "Миграция"
+        lines = [
+            f"{mode} завершена.",
+            f"Всего записей: {result['total']}",
+            f"Записей к изменению: {result['updated']}",
+            f"Аудиопутей к переводу: {result['file_path_candidates']}",
+            f"Путей текста к переводу: {result['text_path_candidates']}",
+            f"Пропущено: {result['skipped']}",
+        ]
+        if result.get('backup_path'):
+            lines.append(f"Бэкап базы перед миграцией: {result['backup_path']}")
+        if result['errors']:
+            lines.append("")
+            lines.append("Ошибки:")
+            lines.extend(result['errors'])
+        if dry_run and not result['errors']:
+            lines.append("")
+            lines.append("Изменения не записаны. Для применения нажмите \"Выполнить миграцию\".")
+        return "\n".join(lines)
+
+    def _run_migration(self, dry_run):
+        from backend.path_resolver import migrate_absolute_paths_to_relative
+        self.check_button.setEnabled(False)
+        self.migrate_button.setEnabled(False)
+        try:
+            result = migrate_absolute_paths_to_relative(dry_run=dry_run)
+            self.output.setPlainText(self._format_result(result, dry_run))
+            if result['errors']:
+                QMessageBox.warning(self, "Миграция путей", "Миграция завершилась с ошибками.")
+            elif not dry_run:
+                QMessageBox.information(self, "Миграция путей", "Пути успешно обновлены.")
+        finally:
+            self.check_button.setEnabled(True)
+            self.migrate_button.setEnabled(True)
+
+    def check_paths(self):
+        self._run_migration(dry_run=True)
+
+    def migrate_paths(self):
+        answer = QMessageBox.question(
+            self,
+            "Подтверждение миграции",
+            "Заменить подходящие абсолютные пути в базе на относительные?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if answer == QMessageBox.Yes:
+            self._run_migration(dry_run=False)
+
+
+class DuplicateResolverWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Разрешение дублей записей")
+        self.setMinimumSize(1050, 620)
+        self.conflicts = []
+        self.current_conflict = None
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(
+            "Выберите конфликт, затем строку записи, которую нужно оставить. "
+            "Перед удалением дублей автоматически создается backup базы."
+        ))
+
+        content = QHBoxLayout()
+        self.conflict_list = QListWidget()
+        self.conflict_list.setMinimumWidth(330)
+        content.addWidget(self.conflict_list)
+
+        right = QVBoxLayout()
+        self.details_table = QTableWidget(0, 10)
+        self.details_table.setHorizontalHeaderLabels([
+            "ID", "Судья", "Дело", "Дата", "Зал", "Расп.", "Текст", "Комментарий", "Путь аудио", "IP"
+        ])
+        self.details_table.horizontalHeader().setStretchLastSection(True)
+        self.details_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.details_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        right.addWidget(self.details_table)
+
+        actions = QHBoxLayout()
+        self.refresh_button = QPushButton("Обновить список")
+        self.keep_button = QPushButton("Оставить выбранную, удалить остальные")
+        self.merge_button = QPushButton("Объединить в выбранную и удалить остальные")
+        self.skip_button = QPushButton("Пропустить конфликт")
+        actions.addWidget(self.refresh_button)
+        actions.addWidget(self.keep_button)
+        actions.addWidget(self.merge_button)
+        actions.addWidget(self.skip_button)
+        right.addLayout(actions)
+
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(130)
+        right.addWidget(self.output)
+
+        content.addLayout(right)
+        layout.addLayout(content)
+        self.setLayout(layout)
+
+        self.refresh_button.clicked.connect(self.load_conflicts)
+        self.conflict_list.currentRowChanged.connect(self.show_conflict)
+        self.keep_button.clicked.connect(lambda: self.resolve_current(merge=False))
+        self.merge_button.clicked.connect(lambda: self.resolve_current(merge=True))
+        self.skip_button.clicked.connect(self.skip_current)
+
+        self.load_conflicts()
+
+    def load_conflicts(self):
+        from backend.duplicate_resolver import find_duplicate_conflicts
+        self.conflicts = find_duplicate_conflicts()
+        self.conflict_list.clear()
+        self.details_table.setRowCount(0)
+        self.current_conflict = None
+        for conflict in self.conflicts:
+            self.conflict_list.addItem(
+                f"{conflict['index']}. {conflict['title']} [{', '.join(map(str, conflict['ids']))}]"
+            )
+        self.output.setPlainText(f"Найдено конфликтов: {len(self.conflicts)}")
+        if self.conflicts:
+            self.conflict_list.setCurrentRow(0)
+
+    def show_conflict(self, row):
+        self.details_table.setRowCount(0)
+        if row < 0 or row >= len(self.conflicts):
+            self.current_conflict = None
+            return
+        self.current_conflict = self.conflicts[row]
+        records = self.current_conflict['records']
+        self.details_table.setRowCount(len(records))
+        for table_row, record in enumerate(records):
+            values = [
+                record['id'],
+                record['user_folder'],
+                record['case_number'],
+                record['audio_date'],
+                record['courtroom'],
+                "да" if record['recognize_text'] else "нет",
+                record['recognized_text_path'],
+                record['comment'],
+                record['file_path'],
+                record['uploaded_ip'],
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                self.details_table.setItem(table_row, col, item)
+        self.details_table.resizeColumnsToContents()
+        if records:
+            self.details_table.selectRow(0)
+
+    def _selected_keep_id(self):
+        row = self.details_table.currentRow()
+        if row < 0:
+            return None
+        item = self.details_table.item(row, 0)
+        return int(item.text()) if item else None
+
+    def resolve_current(self, merge):
+        if not self.current_conflict:
+            return
+        keep_id = self._selected_keep_id()
+        if not keep_id:
+            QMessageBox.warning(self, "Разрешение дублей", "Выберите запись, которую нужно оставить.")
+            return
+        action = "объединить выбранную запись с остальными и удалить дубли" if merge else "оставить выбранную запись и удалить остальные"
+        answer = QMessageBox.question(
+            self,
+            "Подтверждение",
+            f"ID={keep_id}: {action}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if answer != QMessageBox.Yes:
+            return
+        from backend.duplicate_resolver import resolve_duplicate_conflict
+        try:
+            result = resolve_duplicate_conflict(self.current_conflict['ids'], keep_id, merge=merge)
+            self.output.setPlainText(
+                f"Конфликт разрешен.\n"
+                f"Оставлена запись: {result['keep_id']}\n"
+                f"Удалены записи: {', '.join(map(str, result['deleted_ids']))}\n"
+                f"Backup: {result['backup_path']}"
+            )
+            self.load_conflicts()
+        except Exception as exc:
+            QMessageBox.critical(self, "Ошибка", str(exc))
+
+    def skip_current(self):
+        row = self.conflict_list.currentRow()
+        if row + 1 < self.conflict_list.count():
+            self.conflict_list.setCurrentRow(row + 1)
 
 
 class CourtroomManagerWindow(QWidget):

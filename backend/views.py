@@ -7,6 +7,7 @@ import music_tag
 from backend import config
 from backend.db import Session
 from backend.models import AudioRecord
+from backend.path_resolver import absolute_to_relative_path
 from backend.utils import get_available_courtrooms
 
 views = Blueprint('views', __name__)
@@ -14,6 +15,10 @@ views = Blueprint('views', __name__)
 ALLOWED_EXTENSIONS = {'mp3'}
 MIN_SIZE_BYTES = 3000  # 3 секунды в mp3 примерно столько (32000 битрейт ≈ 4кБ/сек)
 MIN_AUDIO_YEAR = 2020
+
+
+def _config_flag(name, default=False):
+    return str(config.get(name, 'true' if default else 'false')).lower() == 'true'
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -35,6 +40,8 @@ def home_redirector(ajax=False):
     if request.method == 'GET':
         return render_template('index.html', directories=os.listdir(config['public_audio_path']),
                                courtrooms=get_available_courtrooms(),
+                               recognize_text_enabled=_config_flag('recognize_text_enabled', True),
+                               recognize_text_default=_config_flag('recognize_text_default', False),
                                title='Архивация аудиопротоколов')
     if request.method == 'POST':
         user_folder = request.form.get('user_folder')
@@ -44,7 +51,7 @@ def home_redirector(ajax=False):
         audio_time = request.form.get('audio_time')
         courtroom = request.form.get('courtroom')
         comment = request.form.get('comment')
-        recognize_text = request.form.get('recognize_text')
+        recognize_text = request.form.get('recognize_text') if _config_flag('recognize_text_enabled', True) else None
         closed_session = request.form.get('closed_session')
         final_temp_id = request.form.get('final_temp_id')
         temp_path = None
@@ -126,8 +133,9 @@ def home_redirector(ajax=False):
         record_id = None
         if not bool(closed_session):
             session = Session()
+            record_file_path = absolute_to_relative_path(file_path) or file_path
             existing = session.query(AudioRecord).filter(
-                (AudioRecord.file_path == file_path) |
+                (AudioRecord.file_path.in_([file_path, record_file_path])) |
                 (
                     (AudioRecord.user_folder == user_folder) &
                     (AudioRecord.case_number == case_number) &
@@ -144,7 +152,7 @@ def home_redirector(ajax=False):
                 user_folder=user_folder,
                 case_number=case_number,
                 audio_date=timestamp,
-                file_path=file_path,
+                file_path=record_file_path,
                 comment=comment,
                 courtroom=courtroom,
                 recognize_text=bool(recognize_text),
@@ -161,6 +169,8 @@ def home_redirector(ajax=False):
 
     return render_template('index.html', directories=os.listdir(config['public_audio_path']),
                            courtrooms=get_available_courtrooms(),
+                           recognize_text_enabled=_config_flag('recognize_text_enabled', True),
+                           recognize_text_default=_config_flag('recognize_text_default', False),
                            title='Архивация аудиопротоколов')
 
 
@@ -169,6 +179,7 @@ def archive_viewer():
     return render_template('archive_viewer.html',
                            directories=os.listdir(config['public_audio_path']),
                            courtrooms=get_available_courtrooms(),
+                           recognize_text_enabled=_config_flag('recognize_text_enabled', True),
                            title="Архив аудиопротоколов")
 
 

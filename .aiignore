@@ -7,7 +7,6 @@
 *.tmp
 *.spec
 *.exe
-*.txt
 *.db
 batches_*
 app.log

@@ -12,6 +12,10 @@ from backend.recognition_orchestrator import (
 from . import config
 from backend.db import Session
 from backend.models import AudioRecord, DownloadLog
+from backend.path_resolver import (
+    resolve_record_audio_path,
+    resolve_record_text_path
+)
 from sqlalchemy import desc, or_
 import zipfile
 import io
@@ -42,17 +46,29 @@ def _safe_ascii_filename(filename):
     return safe.encode('ascii', errors='ignore').decode('ascii') or 'download'
 
 
+def _relative_path_inside(file_path, base_path):
+    try:
+        rel_path = os.path.relpath(file_path, base_path)
+    except ValueError:
+        return None
+    normalized = os.path.normpath(rel_path)
+    if normalized == os.curdir or (
+        not normalized.startswith(os.pardir + os.sep)
+        and normalized != os.pardir
+        and not os.path.isabs(normalized)
+    ):
+        return normalized.replace('\\', '/')
+    return None
+
+
 def _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='application/octet-stream',
                       as_attachment=False, download_name=None):
     base_abs = os.path.abspath(base_path)
     file_abs = os.path.abspath(file_path)
-    try:
-        if os.path.commonpath([base_abs, file_abs]) != base_abs:
-            return "Файл вне разрешенной директории", 403
-    except ValueError:
+    rel_path = _relative_path_inside(file_abs, base_abs)
+    if not rel_path:
         return "Файл вне разрешенной директории", 403
 
-    rel_path = os.path.relpath(file_abs, base_abs).replace('\\', '/')
     response = Response(status=200)
     response.headers['X-Accel-Redirect'] = internal_prefix.rstrip('/') + '/' + quote(rel_path, safe='/')
     response.headers['Content-Type'] = mimetype
@@ -69,11 +85,7 @@ def _resolve_archive_audio(filename):
         if not base_path:
             continue
         full_path = os.path.abspath(os.path.join(base_path, filename))
-        base_abs = os.path.abspath(base_path)
-        try:
-            if os.path.commonpath([base_abs, full_path]) != base_abs:
-                continue
-        except ValueError:
+        if not _relative_path_inside(full_path, os.path.abspath(base_path)):
             continue
         if os.path.exists(full_path):
             prefix = '/protected_public_audio/' if base_path == config['public_audio_path'] else '/protected_closed_audio/'
@@ -91,11 +103,8 @@ def _storage_for_file_path(file_path):
         if not base_path:
             continue
         base_abs = os.path.abspath(base_path)
-        try:
-            if os.path.commonpath([base_abs, file_abs]) == base_abs:
-                return base_path, internal_prefix
-        except ValueError:
-            continue
+        if _relative_path_inside(file_abs, base_abs):
+            return base_path, internal_prefix
     return None, None
 
 
@@ -153,6 +162,10 @@ def _resolve_femida_case_path(case_path):
 
 def _json_error(message, status=400):
     return jsonify({'error': message}), status
+
+
+def _recognition_enabled():
+    return str(config.get('recognize_text_enabled', 'true')).lower() == 'true'
 
 
 def _download_name_from_cases(case_numbers):
@@ -523,7 +536,7 @@ def search_records():
                 'date': rec.audio_date.isoformat(),
                 'courtroom': rec.courtroom,
                 'comment': rec.comment,
-                'file_path': rec.file_path,
+                'file_path': resolve_record_audio_path(rec)[1] or rec.file_path,
                 'recognized_text_path': rec.recognized_text_path,
             })
 
@@ -538,6 +551,24 @@ def serve_audio(filename):
     return _x_accel_redirect(internal_prefix, base_path, full_path, mimetype='audio/mpeg')
 
 
+@api.route('/record_audio/<int:record_id>')
+def serve_record_audio(record_id):
+    with Session() as session:
+        record = session.get(AudioRecord, record_id)
+        if not record:
+            return "Протокол не найден", 404
+        storage_name, file_path, _rel_path = resolve_record_audio_path(record)
+
+    if not file_path or not os.path.exists(file_path):
+        return "Файл не найден", 404
+
+    base_path, internal_prefix = _storage_for_file_path(file_path) if storage_name else (None, None)
+    if base_path and internal_prefix:
+        return _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='audio/mpeg')
+
+    return send_file(file_path, mimetype='audio/mpeg', conditional=True)
+
+
 @api.route('/download')
 def download_files():
     ids = request.args.getlist('id', type=int)
@@ -549,7 +580,7 @@ def download_files():
         files = [
             {
                 "id": rec.id,
-                "file_path": rec.file_path,
+                "file_path": resolve_record_audio_path(rec)[1] or rec.file_path,
                 "case_number": rec.case_number
             }
             for rec in records
@@ -573,7 +604,13 @@ def download_files():
             return "Файл не найден.", 404
         base_path, internal_prefix = _storage_for_file_path(file_path)
         if not base_path:
-            return "Файл вне разрешенной директории", 403
+            return send_file(
+                file_path,
+                mimetype='audio/mpeg',
+                as_attachment=True,
+                download_name=os.path.basename(file_path),
+                conditional=True
+            )
         return _x_accel_redirect(
             internal_prefix,
             base_path,
@@ -606,22 +643,36 @@ def get_record_data(record_id):
         record = session.get(AudioRecord, record_id)
     if not record:
         return jsonify({"error": "Протокол не найден"}), 404
-    # Определяем путь до аудио
-    rel_path = Path(record.file_path).relative_to(config['public_audio_path'])
-    audio_url = f"/api/audio/{rel_path.as_posix()}"
+
+    audio_url = ''
+    audio_error = None
+    storage_name, full_audio_path, rel_audio_path = resolve_record_audio_path(record)
+    if storage_name and full_audio_path and os.path.exists(full_audio_path):
+        rel_path = Path(rel_audio_path)
+        audio_url = f"/api/audio/{rel_path.as_posix()}"
+    elif storage_name:
+        audio_error = "Аудиофайл не найден в хранилище сервера"
+    elif full_audio_path and os.path.exists(full_audio_path):
+        audio_url = f"/api/record_audio/{record.id}"
+    else:
+        audio_error = "Аудиофайл не найден или путь не доступен серверу"
+
     # Парсим текст, если он есть
     phrases = []
-    if record.recognized_text_path and os.path.exists(record.recognized_text_path):
-        phrases = parse_transcript_file(record.recognized_text_path)
+    text_path = resolve_record_text_path(record)
+    if text_path and os.path.exists(text_path):
+        phrases = parse_transcript_file(text_path)
 
     return jsonify({
         'title': f"{record.case_number} — {record.audio_date.strftime('%d.%m.%Y %H:%M')}",
         'audio_url': audio_url,
+        'audio_error': audio_error,
         'phrases': phrases,
         'is_in_recognition_queue': bool(
+            _recognition_enabled() and
             record.recognize_text and (
                 not record.recognized_text_path or
-                not os.path.exists(record.recognized_text_path)
+                not (text_path and os.path.exists(text_path))
             )
         )
     })
@@ -629,15 +680,19 @@ def get_record_data(record_id):
 
 @api.route('/reset_transcription/<int:record_id>', methods=['POST'])
 def reset_transcription(record_id):
+    if not _recognition_enabled():
+        return jsonify({"error": "Распознавание отключено на сервере"}), 403
+
     session = Session()
     record = session.get(AudioRecord, int(record_id))
     if not record:
         session.close()
         return jsonify({"error": "Протокол не найден"}), 404
 
-    if record.recognized_text_path and os.path.exists(record.recognized_text_path):
+    text_path = resolve_record_text_path(record)
+    if text_path and os.path.exists(text_path):
         try:
-            os.remove(record.recognized_text_path)
+            os.remove(text_path)
         except Exception as e:
             print(f"Не удалось удалить файл: {e}")
 
@@ -650,6 +705,9 @@ def reset_transcription(record_id):
 
 @api.route('/get_vr_queue_len')
 def get_vr_queue_len():
+    if not _recognition_enabled():
+        return jsonify({'records_to_vr': 0})
+
     with Session() as session:
         count = session.query(AudioRecord).filter(
             AudioRecord.recognize_text.is_(True),
@@ -930,9 +988,10 @@ def export_text(record_id):
         )
     with Session() as session:
         record = session.get(AudioRecord, record_id)
-    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+    text_path = resolve_record_text_path(record) if record else None
+    if not record or not text_path or not os.path.exists(text_path):
         return "Протокол не найден или отсутствует текст", 404
-    phrases = parse_transcript_file(record.recognized_text_path)
+    phrases = parse_transcript_file(text_path)
     rtf_text = phrases_to_rtf(phrases)
     payload = io.BytesIO(rtf_text.encode('cp1251', errors='ignore'))
     payload.seek(0)
@@ -975,14 +1034,15 @@ def add_replacement_rule():
             f.writelines(lines)
     session = Session()
     record = session.get(AudioRecord, int(record_id))
-    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+    text_path = resolve_record_text_path(record) if record else None
+    if not record or not text_path or not os.path.exists(text_path):
         session.close()
         return jsonify({'error': 'Запись не найдена'}), 404
-    with open(record.recognized_text_path, 'r', encoding='utf-8') as f:
+    with open(text_path, 'r', encoding='utf-8') as f:
         old_text = f.read()
     rules = load_phrase_replacement_rules(force_reload=True)
     new_tagged = apply_replacement_with_tags(strip_replacement_tags(old_text), rules)
-    with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
+    with open(text_path, 'w', encoding='utf-8') as f:
         f.write(new_tagged)
     session.close()
     return jsonify({'rule_index': rule_index})
@@ -999,10 +1059,10 @@ def undo_replacement():
         return jsonify({'error': 'Недостаточно данных'}), 400
     session = Session()
     record = session.get(AudioRecord, int(record_id))
-    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+    path = resolve_record_text_path(record) if record else None
+    if not record or not path or not os.path.exists(path):
         session.close()
         return jsonify({'error': 'Файл не найден'}), 404
-    path = record.recognized_text_path
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read()
     pattern = (
@@ -1025,15 +1085,16 @@ def reapply_rules():
     record_id = data.get('record_id')
     session = Session()
     record = session.get(AudioRecord, int(record_id))
-    if not record or not record.recognized_text_path or not os.path.exists(record.recognized_text_path):
+    text_path = resolve_record_text_path(record) if record else None
+    if not record or not text_path or not os.path.exists(text_path):
         session.close()
         return jsonify({'error': 'Запись не найдена'}), 404
-    with open(record.recognized_text_path, 'r', encoding='utf-8') as f:
+    with open(text_path, 'r', encoding='utf-8') as f:
         content = f.read()
     base_text = strip_replacement_tags(content)
     rules = load_phrase_replacement_rules(force_reload=True)
     new_text = apply_replacement_with_tags(base_text, rules)
-    with open(record.recognized_text_path, 'w', encoding='utf-8') as f:
+    with open(text_path, 'w', encoding='utf-8') as f:
         f.write(new_text)
     session.close()
     return jsonify({'status': 'ok'})

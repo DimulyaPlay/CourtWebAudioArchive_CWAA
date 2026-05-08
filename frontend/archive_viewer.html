@@ -7,6 +7,7 @@
   <script src="{{ 'frameworks/jquery.min.js'|versioned_static }}"></script>
   <script src="{{ 'frameworks/bootstrap.bundle.min.js'|versioned_static }}"></script>
   <link href="{{ 'frameworks/bootstrap.min.css'|versioned_static }}" rel="stylesheet">
+  <link href="{{ 'frameworks/bootstrap-icons.min.css'|versioned_static }}" rel="stylesheet">
   <link href="{{ 'style.css'|versioned_static }}" rel="stylesheet">
   <style>
     html,
@@ -155,8 +156,8 @@
         <h4 id="selectedTitle" class="mb-0"></h4>
         <div class="d-flex gap-2" role="group">
           <button id="downloadTextBtn" class="btn btn-sm btn-outline-primary" style="display:none;">Скачать текст</button>
-          <button id="retranscribeBtn" class="btn btn-sm btn-outline-danger" style="display:none;">Распознать заново</button>
-          <button id="reapplyRulesBtn" class="btn btn-sm btn-outline-success" style="display:none;">Применить новые правила автозамены</button>
+          <button id="retranscribeBtn" class="btn btn-sm btn-outline-danger{% if not recognize_text_enabled %} d-none{% endif %}" style="display:none;">Распознать заново</button>
+          <button id="reapplyRulesBtn" class="btn btn-sm btn-outline-success{% if not recognize_text_enabled %} d-none{% endif %}" style="display:none;">Применить новые правила автозамены</button>
         </div>
       </div>
       <div class="mb-2 d-flex align-items-center gap-2">
@@ -164,11 +165,18 @@
           style="max-width: 250px;">
         <button id="prevMatch" class="btn btn-sm btn-outline-secondary">←</button>
         <button id="nextMatch" class="btn btn-sm btn-outline-secondary">→</button>
+        <a class="btn btn-sm btn-outline-primary" href="/">
+          <i class="bi bi-arrow-left"></i> К архивации
+        </a>
         <span id="matchCounter" class="text-muted small ms-2"></span>
-        <span id="queueCounter" class="text-muted small ms-auto">Протоколов в очереди: ?</span>
+        <span id="queueCounter" class="text-muted small ms-auto{% if not recognize_text_enabled %} d-none{% endif %}">Протоколов в очереди: ?</span>
       </div>
       <div class="transcript-viewer" id="transcriptBox">
+        {% if not recognize_text_enabled %}
+        <p class="text-muted text-center mt-5">Распознавание отключено на сервере.</p>
+        {% else %}
         <p class="text-muted text-center mt-5">Выберите аудиозапись для просмотра протокола</p>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -291,6 +299,9 @@
     </div>
   </div>
 
+  <script>
+    window.CWAA_RECOGNITION_ENABLED = {{ 'true' if recognize_text_enabled else 'false' }};
+  </script>
   <script src="{{ 'archive_viewer.js'|versioned_static }}"></script>
 </body>
 
