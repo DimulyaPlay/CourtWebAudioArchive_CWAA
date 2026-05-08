@@ -1,10 +1,12 @@
+import traceback
+
 from PySide2.QtCore import Signal, Qt, QTranslator, QLocale, QLibraryInfo, QCoreApplication
 from PySide2.QtGui import QIcon
 import time
 from backend import create_app, config
-from backend.utils import save_config, get_all_public_ips, cleanup_old_mp3_files, version
+from backend.utils import save_config, get_all_public_ips, cleanup_old_mp3_files, version, TEMP_MP3_FOLDER
 from backend.recognition_orchestrator import run_orchestrator_loop
-from waitress import serve
+from waitress import create_server
 import subprocess
 from string import Template
 import os
@@ -14,6 +16,8 @@ from PySide2.QtWidgets import (QStyleFactory,
     QMainWindow, QApplication, QPushButton, QLabel, QVBoxLayout, QWidget, QLineEdit, QFormLayout, QMessageBox,
     QComboBox, QSystemTrayIcon, QMenu, QAction, QCheckBox, QListWidget, QHBoxLayout, QTableWidget, QTableWidgetItem, QFileDialog)
 import sys
+import socket
+import urllib.request
 from backend.backup_service import BackupSettingsWindow
 
 
@@ -28,24 +32,58 @@ os.makedirs('backend', exist_ok=True)
 
 # Nginx configuration template
 nginx_config_template = """
-pid nginx_temp.pid;
+pid "${nginx_pid}";
+error_log "${nginx_error_log}";
 
 events {
     worker_connections 1024;
 }
 
 http {
+    access_log "${nginx_access_log}";
+    sendfile on;
+    tcp_nopush on;
+    keepalive_timeout 65;
+
     server {
-        listen ${app_port};
-        server_name ${server_ip}${app_port};
+        listen ${server_ip}:${external_port};
+        server_name _;
         client_max_body_size 500M;
 
+        location /static/ {
+            alias "${static_root}/";
+            expires 1d;
+            add_header Cache-Control "public";
+        }
+
+        location /protected_public_audio/ {
+            internal;
+            alias "${public_audio_root}/";
+            types { audio/mpeg mp3; }
+            add_header Accept-Ranges bytes;
+        }
+
+        location /protected_closed_audio/ {
+            internal;
+            alias "${closed_audio_root}/";
+            types { audio/mpeg mp3; }
+            add_header Accept-Ranges bytes;
+        }
+
+        location /protected_temp_mp3/ {
+            internal;
+            alias "${temp_mp3_root}/";
+            types { audio/mpeg mp3; }
+            add_header Accept-Ranges bytes;
+        }
+
         location / {
-            proxy_pass http://127.0.0.1:${app_port};
+            proxy_pass http://127.0.0.1:${internal_port};
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_buffering off;
             proxy_read_timeout 600s;
             proxy_connect_timeout 600s;
             proxy_send_timeout 600s;
@@ -54,16 +92,63 @@ http {
 }
 """
 
-nginx_process = None
-flask_thread = None
-flask_app = None
+
+def _nginx_path(path):
+    return os.path.abspath(path).replace('\\', '/')
 
 
-def generate_nginx_config(config):
+def _is_port_free(host, port):
     try:
+        with socket.create_connection((host, int(port)), timeout=0.5):
+            return False
+    except OSError:
+        return True
+
+
+def _find_internal_port(external_port):
+    try:
+        preferred = int(external_port) + 10000
+    except Exception:
+        preferred = 14446
+    candidates = []
+    if 1 <= preferred <= 65535:
+        candidates.append(preferred)
+    candidates.extend(range(14000, 15000))
+    for port in candidates:
+        if _is_port_free('127.0.0.1', port):
+            return port
+    raise RuntimeError("Не найден свободный внутренний порт для Waitress")
+
+
+def _wait_for_http(url, timeout=15):
+    deadline = time.time() + timeout
+    last_error = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if 200 <= response.status < 500:
+                    return True, ""
+        except Exception as e:
+            last_error = e
+        time.sleep(0.5)
+    return False, str(last_error or "нет ответа")
+
+
+def generate_nginx_config(server_ip, external_port, internal_port):
+    try:
+        public_audio_root = config.get('public_audio_path') or os.getcwd()
+        closed_audio_root = config.get('closed_audio_path') or os.getcwd()
         nginx_config = Template(nginx_config_template).safe_substitute(
-            server_ip=config['server_ip'],
-            app_port=config['server_port']
+            server_ip=server_ip,
+            external_port=external_port,
+            internal_port=internal_port,
+            static_root=_nginx_path(os.path.join(os.getcwd(), 'frontend', 'assets')),
+            public_audio_root=_nginx_path(public_audio_root),
+            closed_audio_root=_nginx_path(closed_audio_root),
+            temp_mp3_root=_nginx_path(TEMP_MP3_FOLDER),
+            nginx_pid=_nginx_path(os.path.join(os.getcwd(), 'logs', 'nginx.pid')),
+            nginx_error_log=_nginx_path(os.path.join(os.getcwd(), 'logs', 'nginx_error.log')),
+            nginx_access_log=_nginx_path(os.path.join(os.getcwd(), 'logs', 'nginx_access.log')),
         )
         config_path = 'nginx_dynamic.conf'
         if os.path.exists(config_path):
@@ -76,100 +161,186 @@ def generate_nginx_config(config):
 
 
 def start_nginx():
-    global nginx_process
     try:
-        with open('logs/nginx_stderr.log', 'wb') as errlog:
-            nginx_process = subprocess.Popen(
-                ['nginx/nginx.exe', '-c', os.path.abspath('nginx_dynamic.conf')],
-                stdout=subprocess.DEVNULL, stderr=errlog
-            )
+        nginx_exe = os.path.join('nginx', 'nginx.exe')
+        if not os.path.exists(nginx_exe):
+            return 1, f"start_nginx: не найден {nginx_exe}"
+        test = subprocess.run(
+            [nginx_exe, '-t', '-c', os.path.abspath('nginx_dynamic.conf')],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        if test.returncode != 0:
+            print(f"start_nginx -t: {test.stderr or test.stdout}")
+            return 1, "start_nginx: nginx_dynamic.conf не прошел проверку"
+        stdout = open(os.path.join('logs', 'nginx_stdout.log'), 'a', buffering=1)
+        stderr = open(os.path.join('logs', 'nginx_stderr.log'), 'a', buffering=1)
+        proc = subprocess.Popen(
+            [nginx_exe, '-c', os.path.abspath('nginx_dynamic.conf')],
+            stdout=stdout, stderr=stderr
+        )
         time.sleep(2)
-        if nginx_process.poll() is not None:
-            stdout, stderr = nginx_process.communicate()
-            return 1, f"start_nginx: {stderr.decode()}"
-        return 0, ""
+        if proc.poll() is not None:
+            print("start_nginx: процесс nginx завершился сразу после запуска")
+            return 1, "start_nginx: см. logs/nginx_stderr.log"
+        return 0, "", proc
     except Exception as e:
         return 1, f"start_nginx: {str(e)}"
 
 
-def stop_nginx():
-    global nginx_process
-    pid_file = "nginx_temp.pid"
-    if not os.path.exists(pid_file):
-        print("[NGINX] PID-файл не найден, возможно nginx уже завершён.")
+def stop_nginx(proc):
+    if not proc:
         return
     try:
-        with open(pid_file, "r") as f:
-            master_pid = int(f.read().strip())
-        master_proc = psutil.Process(master_pid)
-        children = master_proc.children(recursive=True)
-        for child in children:
-            try:
-                child.terminate()
-            except Exception as e:
-                print(f"[!] Не удалось завершить процесс {child.pid}: {e}")
-        master_proc.terminate()
-        _, alive = psutil.wait_procs([master_proc] + children, timeout=5)
-        for p in alive:
-            try:
-                p.kill()
-            except Exception as e:
-                print(f"[!] Не удалось принудительно убить процесс {p.pid}: {e}")
-        print(f"[NGINX] Завершено nginx PID={master_pid}")
-    except Exception as e:
-        print(f"[!] Ошибка при завершении nginx: {e}")
-    finally:
-        if os.path.exists(pid_file):
-            os.remove(pid_file)
-        nginx_process = None
-
-
-def start_flask():
-    global flask_thread, flask_app
-    flask_app, message = create_app()  # Создаем Flask-приложение
-    print(message)
-    if flask_app:
+        nginx_proc = psutil.Process(proc.pid)
+    except Exception:
+        print('Процесс nginx не найден', getattr(proc, 'pid', None))
+        return
+    for child in nginx_proc.children(recursive=True):
         try:
-            print("Flask App создан:", flask_app)
-            serve(flask_app, host='127.0.0.1', port=config['server_port'], threads=12)
+            child.terminate()
+            child.wait(timeout=3)
+        except psutil.NoSuchProcess:
+            pass
+        except psutil.TimeoutExpired:
+            child.kill()
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        proc.kill()
+
+
+class ServerManager:
+    def __init__(self):
+        self.threads = {}
+        self.stop_event = threading.Event()
+        self.nginx_process = None
+        self.waitress_server = None
+        self.flask_app = None
+        self.flask_thread = None
+        self.service_status = "stopped"
+        self.last_exit_reason = None
+        self.internal_port = None
+
+    def _bootstrap_app(self):
+        app, message = create_app()
+        if not app:
+            raise RuntimeError(message)
+        return app
+
+    def _start_waitress(self, app, internal_port):
+        server = create_server(
+            app,
+            host='127.0.0.1',
+            port=internal_port,
+            threads=12,
+            connection_limit=300,
+            channel_timeout=600,
+        )
+        self.waitress_server = server
+
+        def run_server():
+            try:
+                server.run()
+            except Exception as e:
+                if not self.stop_event.is_set():
+                    traceback.print_exc()
+                    self.last_exit_reason = f"waitress: {e}"
+
+        th = threading.Thread(target=run_server, daemon=True, name="waitress")
+        th.start()
+        self.flask_thread = th
+        self.threads['waitress'] = th
+
+    def _start_thread(self, key, target, args=()):
+        th = threading.Thread(target=target, args=args, daemon=True, name=key)
+        th.start()
+        self.threads[key] = th
+        return th
+
+    def start(self, server_ip, external_port):
+        self.service_status = "starting"
+        self.last_exit_reason = None
+        self.stop_event = threading.Event()
+        self.threads = {}
+        external_port = int(external_port)
+        internal_port = _find_internal_port(external_port)
+        self.internal_port = internal_port
+        try:
+            app = self._bootstrap_app()
+            self.flask_app = app
+            print("Flask App создан:", app)
+            self._start_waitress(app, internal_port)
+            ok, detail = _wait_for_http(f"http://127.0.0.1:{internal_port}/healthz", timeout=20)
+            if not ok:
+                raise RuntimeError(f"Waitress не отвечает на health-check: {detail}")
+
+            res, msg = generate_nginx_config(server_ip, external_port, internal_port)
+            if res:
+                raise RuntimeError(msg)
+            result = start_nginx()
+            if result[0]:
+                raise RuntimeError(result[1])
+            self.nginx_process = result[2]
+            ok, detail = _wait_for_http(f"http://{server_ip}:{external_port}/healthz", timeout=20)
+            if not ok:
+                raise RuntimeError(f"Nginx не отвечает на health-check: {detail}")
+
+            recognize_path = config.get('recognize_text_from_audio_path')
+            if recognize_path and os.path.exists(recognize_path):
+                self._start_thread('orchestrator', run_orchestrator_loop, (self.stop_event,))
+            else:
+                print('Папка распознавания не настроена — оркестратор распознавания отключен.')
+            self._start_thread('cleanup_mp3', cleanup_old_mp3_files, (self.stop_event,))
+            self.service_status = "running"
+            return True, ""
         except Exception as e:
-            flask_thread.exit_reason = f"serve: {e}"
-    else:
-        print(message)
-        window.signal_error(message)
+            traceback.print_exc()
+            self.last_exit_reason = str(e)
+            self.stop()
+            self.service_status = "failed"
+            return False, str(e)
 
+    def stop(self):
+        if self.service_status == "stopped":
+            return
+        self.service_status = "stopping"
+        self.stop_event.set()
+        stop_nginx(self.nginx_process)
+        self.nginx_process = None
+        if self.waitress_server:
+            try:
+                self.waitress_server.close()
+            except Exception as e:
+                print(f"Ошибка при остановке Waitress: {e}")
+        for key, thread in list(self.threads.items()):
+            if thread and thread.is_alive():
+                try:
+                    thread.join(timeout=5)
+                except Exception as e:
+                    print(f"Ошибка при завершении потока {key}: {e}")
+        self.waitress_server = None
+        self.flask_thread = None
+        self.flask_app = None
+        self.internal_port = None
+        self.service_status = "stopped"
 
-def start_service():
-    global flask_thread, flask_app
-    res, msg = generate_nginx_config(config)
-    if res:
-        window.signal_error(msg)
-        return
-    res, msg = start_nginx()
-    if res:
-        window.signal_error(msg)
-        return
-    flask_thread = threading.Thread(target=start_flask, daemon=True)
-    flask_thread.exit_reason = 0
-    flask_thread.start()
-    time.sleep(2)
-    if flask_app is None:
-        print("Ошибка: Flask App не создан!")
-        return
-
-
-def stop_service():
-    global flask_thread
-    stop_nginx()
+    def thread(self, key):
+        return self.threads.get(key)
 
 
 class MainWindow(QMainWindow):
     nginx_error_signal = Signal(str)
+    service_start_finished = Signal(bool, str)
+    service_stop_finished = Signal()
 
     def __init__(self):
         super().__init__()
+        self.manager = ServerManager()
         self.backup_window = None
         self.monitor_thread = None
+        self.orchestrator_thread = None
+        self.cleanup_thread = None
         self.stop_threads_event = threading.Event()
         self.setWindowTitle(f"Сервер CWAA, версия {version}")
         self.setMinimumSize(500, 400)
@@ -178,10 +349,14 @@ class MainWindow(QMainWindow):
         # Статус сервера и кнопки
         self.status_label = QLabel("Статус: Остановлен", self)
         self.start_button = QPushButton("🚀 Запустить сервер", self)
+        self.stop_button = QPushButton("Остановить сервер", self)
+        self.stop_button.setEnabled(False)
         self.app_link = QLabel()
         self.update_app_link()
         self.app_link.setOpenExternalLinks(True)
         self.nginx_error_signal.connect(self.signal_error)
+        self.service_start_finished.connect(self.on_service_start_finished)
+        self.service_stop_finished.connect(self.on_service_stop_finished)
 
         # Настройки формы
         form_layout = QFormLayout()
@@ -229,6 +404,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_label)
         layout.addWidget(self.app_link)
         layout.addWidget(self.start_button)
+        layout.addWidget(self.stop_button)
         layout.addLayout(form_layout)
         layout.addWidget(self.firewall_button)
         layout.addWidget(self.scan_button)
@@ -240,6 +416,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
         self.start_button.clicked.connect(self.start_server)
+        self.stop_button.clicked.connect(self.stop_server)
 
         self.tray_icon = QSystemTrayIcon(self)
         self.update_tray_icon("yellow")  # Изначально остановлен
@@ -249,6 +426,11 @@ class MainWindow(QMainWindow):
         self.start_action = QAction("Запустить сервер", self)
         self.start_action.triggered.connect(self.start_server)
         tray_menu.addAction(self.start_action)
+
+        self.stop_action = QAction("Остановить сервер", self)
+        self.stop_action.triggered.connect(self.stop_server)
+        self.stop_action.setEnabled(False)
+        tray_menu.addAction(self.stop_action)
 
         exit_action = QAction("Выход", self)
         exit_action.triggered.connect(self.exit_application)
@@ -274,70 +456,159 @@ class MainWindow(QMainWindow):
 
     def start_server(self):
         try:
+            if self.manager.service_status in ("starting", "running"):
+                return
             self.save_config()
             if not self.backup_window:
                 self.backup_window = BackupSettingsWindow()
-            start_service()  # Запуск сервиса, включая Flask
-            threading.Thread(target=run_orchestrator_loop, daemon=True).start()
+            server_ip = self.server_ip_combo.currentText()
+            server_port = int(self.server_port_input.text())
+            self.set_starting_state()
 
-            self.monitor_thread = threading.Thread(target=self.monitor_services, args=(self.nginx_error_signal, self.stop_threads_event),
-                                                   daemon=True)
-            self.monitor_thread.start()
-            # Пример запуска в отдельном потоке
-            threading.Thread(target=cleanup_old_mp3_files, daemon=True).start()
-            # Ждем, пока flask_app инициализируется
-            retries = 5
-            while flask_app is None and retries > 0:
-                print("Ожидание инициализации Flask-приложения...")
-                time.sleep(2)
-                retries -= 1
-            if flask_app is None:
-                print("Flask-приложение так и не было инициализировано. Мониторинг не запущен.")
-                return
-            self.update_status("Запущен")
-            self.update_tray_icon("green")
-            self.start_button.setDisabled(True)
-            self.server_ip_combo.setDisabled(True)
-            self.server_port_input.setDisabled(True)
-            self.public_audio_path_input.setDisabled(True)
-            self.closed_audio_path_input.setDisabled(True)
-            self.save_button.setDisabled(True)
-            self.start_action.setDisabled(True)
-            self.firewall_button.setDisabled(True)
-            self.create_year_subfolders.setDisabled(True)
-            self.recognize_text_from_audio_path_input.setDisabled(True)
-            self.scan_button.setDisabled(True)
-            self.backup_button.setDisabled(True)
-            self.courtroom_button.setDisabled(True)
-        except RuntimeError as e:
+            def run_start():
+                ok, message = self.manager.start(server_ip, server_port)
+                self.service_start_finished.emit(ok, message)
+
+            threading.Thread(target=run_start, daemon=True, name='service_start').start()
+        except Exception as e:
             self.update_tray_icon("red")
             self.show_error_message(str(e))
 
     def stop_server(self):
-        global flask_thread
-        stop_service()
-        self.stop_threads_event.set()
-        if self.monitor_thread and self.monitor_thread.is_alive():
-            self.monitor_thread.join()
+        if self.manager.service_status in ("stopped", "stopping"):
+            return
+        self.set_stopping_state()
+
+        def run_stop():
+            self.manager.stop()
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                try:
+                    self.monitor_thread.join(timeout=5)
+                except Exception as e:
+                    print(f"Ошибка при завершении потока мониторинга: {e}")
+            self.service_stop_finished.emit()
+
+        threading.Thread(target=run_stop, daemon=True, name='service_stop').start()
+
+    def on_service_start_finished(self, ok, message):
+        self.stop_threads_event = self.manager.stop_event
+        if not ok:
+            self.signal_error(message or 'Ошибка запуска')
+            self.show_error_message(message or 'Ошибка запуска')
+            return
+        self.orchestrator_thread = self.manager.thread('orchestrator')
+        self.cleanup_thread = self.manager.thread('cleanup_mp3')
+        self.monitor_thread = threading.Thread(
+            target=self.monitor_services,
+            args=(self.nginx_error_signal, self.stop_threads_event),
+            daemon=True,
+            name='monitor_services'
+        )
+        self.monitor_thread.start()
+        if self.monitor_thread.is_alive():
+            print('Мониторинг процессов запущен.')
+        self.set_running_state()
+
+    def on_service_stop_finished(self):
+        self.orchestrator_thread = None
+        self.cleanup_thread = None
+        self.monitor_thread = None
+        self.set_stopped_state()
+
+    def set_starting_state(self):
+        self.update_status("Запускается...")
+        self.update_tray_icon("yellow")
+        self.start_button.setText("Запуск...")
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+        self.server_ip_combo.setEnabled(False)
+        self.server_port_input.setEnabled(False)
+        self.public_audio_path_input.setEnabled(False)
+        self.closed_audio_path_input.setEnabled(False)
+        self.save_button.setEnabled(False)
+        self.start_action.setEnabled(False)
+        self.stop_action.setEnabled(False)
+        self.firewall_button.setEnabled(False)
+        self.create_year_subfolders.setEnabled(False)
+        self.recognize_text_from_audio_path_input.setEnabled(False)
+        self.scan_button.setEnabled(False)
+        self.backup_button.setEnabled(False)
+        self.courtroom_button.setEnabled(False)
+
+    def set_running_state(self):
+        self.update_status("Запущен")
+        self.update_tray_icon("green")
+        self.start_button.setText("🚀 Запустить сервер")
+        self.stop_button.setText("Остановить сервер")
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.start_action.setEnabled(False)
+        self.stop_action.setEnabled(True)
+        self.server_ip_combo.setEnabled(False)
+        self.server_port_input.setEnabled(False)
+        self.public_audio_path_input.setEnabled(False)
+        self.closed_audio_path_input.setEnabled(False)
+        self.save_button.setEnabled(False)
+        self.firewall_button.setEnabled(False)
+        self.create_year_subfolders.setEnabled(False)
+        self.recognize_text_from_audio_path_input.setEnabled(False)
+        self.scan_button.setEnabled(False)
+        self.backup_button.setEnabled(False)
+        self.courtroom_button.setEnabled(False)
+
+    def set_stopping_state(self):
+        self.update_status("Останавливается...")
+        self.update_tray_icon("yellow")
+        self.stop_button.setText("Остановка...")
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+        self.start_action.setEnabled(False)
+        self.stop_action.setEnabled(False)
+
+    def set_stopped_state(self):
+        self.update_status("Остановлен")
+        self.update_tray_icon("yellow")
+        self.start_button.setText("🚀 Запустить сервер")
+        self.stop_button.setText("Остановить сервер")
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.server_ip_combo.setEnabled(True)
+        self.server_port_input.setEnabled(True)
+        self.public_audio_path_input.setEnabled(True)
+        self.closed_audio_path_input.setEnabled(True)
+        self.save_button.setEnabled(True)
+        self.start_action.setEnabled(True)
+        self.stop_action.setEnabled(False)
+        self.firewall_button.setEnabled(True)
+        self.create_year_subfolders.setEnabled(True)
+        self.recognize_text_from_audio_path_input.setEnabled(True)
+        self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
+        self.backup_button.setEnabled(True)
+        self.courtroom_button.setEnabled(True)
 
     def monitor_services(self, signal_error, stop_event):
         """Функция для отслеживания процессов nginx и flask"""
-        global nginx_process, flask_thread
         while not stop_event.is_set():
-            if nginx_process:
+            if self.manager.nginx_process:
                 try:
-                    if not psutil.pid_exists(nginx_process.pid):
-                        raise psutil.NoSuchProcess(nginx_process.pid)
-                    nginx_proc = psutil.Process(nginx_process.pid)
+                    if not psutil.pid_exists(self.manager.nginx_process.pid):
+                        raise psutil.NoSuchProcess(self.manager.nginx_process.pid)
+                    nginx_proc = psutil.Process(self.manager.nginx_process.pid)
                     for child in nginx_proc.children(recursive=True):
                         if not child.is_running():
                             raise psutil.NoSuchProcess(child.pid)
                 except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
                     signal_error.emit("Nginx умер")  # Ошибка Nginx
                     break
-            # Добавляем проверку работы Flask
-            if flask_thread and not flask_thread.is_alive():
-                signal_error.emit(f'Flask умер: {flask_thread.exit_reason}')  # Ошибка Flask
+            if self.manager.flask_thread and not self.manager.flask_thread.is_alive():
+                reason = self.manager.last_exit_reason or "неизвестно"
+                signal_error.emit(f'Flask умер: {reason}')  # Ошибка Flask
+                break
+            if self.orchestrator_thread and not self.orchestrator_thread.is_alive():
+                signal_error.emit('Оркестратор распознавания умер')
+                break
+            if self.cleanup_thread and not self.cleanup_thread.is_alive():
+                signal_error.emit('Очистка временных mp3 умерла')
                 break
             for i in range(10):
                 time.sleep(1)
@@ -353,13 +624,40 @@ class MainWindow(QMainWindow):
 
     def signal_error(self, message="Ошибка"):
         """Метод, вызываемый при обнаружении ошибки для обновления статуса."""
+        if self.manager.service_status == "running":
+            self.update_status("Останавливается после ошибки...")
+            self.update_tray_icon("yellow")
+            self.manager.stop()
         self.update_status(message)
         self.update_tray_icon("red")
+        self.start_button.setText("🚀 Запустить сервер")
+        self.stop_button.setText("Остановить сервер")
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.server_ip_combo.setEnabled(True)
+        self.server_port_input.setEnabled(True)
+        self.public_audio_path_input.setEnabled(True)
+        self.closed_audio_path_input.setEnabled(True)
+        self.save_button.setEnabled(True)
+        self.start_action.setEnabled(True)
+        self.stop_action.setEnabled(False)
+        self.firewall_button.setEnabled(True)
+        self.create_year_subfolders.setEnabled(True)
+        self.recognize_text_from_audio_path_input.setEnabled(True)
+        self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
+        self.backup_button.setEnabled(True)
+        self.courtroom_button.setEnabled(True)
 
     def save_config(self):
         global config
         config['server_ip'] = self.server_ip_combo.currentText()
-        config['server_port'] = int(self.server_port_input.text())
+        try:
+            server_port = int(self.server_port_input.text())
+        except ValueError:
+            raise RuntimeError("Порт сервера должен быть числом")
+        if not 1 <= server_port <= 65535:
+            raise RuntimeError("Порт сервера должен быть в диапазоне 1-65535")
+        config['server_port'] = server_port
         public_audio_path = self.public_audio_path_input.text().replace('"', '')
         closed_audio_path = self.closed_audio_path_input.text().replace('"', '')
         try:
@@ -418,7 +716,7 @@ class MainWindow(QMainWindow):
         self.hide()
 
     def exit_application(self):
-        self.stop_server()
+        self.manager.stop()
         sys.exit(0)
 
 

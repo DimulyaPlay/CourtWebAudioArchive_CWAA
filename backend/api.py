@@ -1,4 +1,4 @@
-from flask import request, jsonify, Blueprint, send_file
+from flask import request, jsonify, Blueprint, send_file, Response
 import os
 from backend.utils import (
     parse_transcript_file,
@@ -26,6 +26,7 @@ import shutil
 import math
 import json
 from array import array
+from urllib.parse import quote
 
 FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвертации одновременно
 WAVEFORM_PEAK_COUNT = 600
@@ -34,6 +35,68 @@ MIN_AUDIO_YEAR = 2020
 
 
 api = Blueprint('api', __name__)
+
+
+def _safe_ascii_filename(filename):
+    safe = re.sub(r'[\\/:*?"<>|]+', '_', str(filename or 'download')).strip(' ._')
+    return safe.encode('ascii', errors='ignore').decode('ascii') or 'download'
+
+
+def _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='application/octet-stream',
+                      as_attachment=False, download_name=None):
+    base_abs = os.path.abspath(base_path)
+    file_abs = os.path.abspath(file_path)
+    try:
+        if os.path.commonpath([base_abs, file_abs]) != base_abs:
+            return "Файл вне разрешенной директории", 403
+    except ValueError:
+        return "Файл вне разрешенной директории", 403
+
+    rel_path = os.path.relpath(file_abs, base_abs).replace('\\', '/')
+    response = Response(status=200)
+    response.headers['X-Accel-Redirect'] = internal_prefix.rstrip('/') + '/' + quote(rel_path, safe='/')
+    response.headers['Content-Type'] = mimetype
+    if as_attachment:
+        name = download_name or os.path.basename(file_abs)
+        response.headers['Content-Disposition'] = (
+            f'attachment; filename="{_safe_ascii_filename(name)}"; filename*=UTF-8\'\'{quote(name)}'
+        )
+    return response
+
+
+def _resolve_archive_audio(filename):
+    for base_path in (config['public_audio_path'], config['closed_audio_path']):
+        if not base_path:
+            continue
+        full_path = os.path.abspath(os.path.join(base_path, filename))
+        base_abs = os.path.abspath(base_path)
+        try:
+            if os.path.commonpath([base_abs, full_path]) != base_abs:
+                continue
+        except ValueError:
+            continue
+        if os.path.exists(full_path):
+            prefix = '/protected_public_audio/' if base_path == config['public_audio_path'] else '/protected_closed_audio/'
+            return base_path, full_path, prefix
+    return None, None, None
+
+
+def _storage_for_file_path(file_path):
+    file_abs = os.path.abspath(file_path)
+    storages = (
+        (config['public_audio_path'], '/protected_public_audio/'),
+        (config['closed_audio_path'], '/protected_closed_audio/'),
+    )
+    for base_path, internal_prefix in storages:
+        if not base_path:
+            continue
+        base_abs = os.path.abspath(base_path)
+        try:
+            if os.path.commonpath([base_abs, file_abs]) == base_abs:
+                return base_path, internal_prefix
+        except ValueError:
+            continue
+    return None, None
 
 
 def _normalize_femida_display_name(value):
@@ -469,13 +532,10 @@ def search_records():
 
 @api.route('/audio/<path:filename>')
 def serve_audio(filename):
-    full_path = os.path.join(config['public_audio_path'], filename)
-    if not os.path.exists(full_path):
-        full_path = os.path.join(config['closed_audio_path'], filename)
-        if not os.path.exists(full_path):
-            return "Файл не найден", 404
-
-    return send_file(full_path, mimetype='audio/mpeg')
+    base_path, full_path, internal_prefix = _resolve_archive_audio(filename)
+    if not full_path:
+        return "Файл не найден", 404
+    return _x_accel_redirect(internal_prefix, base_path, full_path, mimetype='audio/mpeg')
 
 
 @api.route('/download')
@@ -511,7 +571,17 @@ def download_files():
         file_path = files[0]["file_path"]
         if not os.path.exists(file_path):
             return "Файл не найден.", 404
-        return send_file(file_path, as_attachment=True)
+        base_path, internal_prefix = _storage_for_file_path(file_path)
+        if not base_path:
+            return "Файл вне разрешенной директории", 403
+        return _x_accel_redirect(
+            internal_prefix,
+            base_path,
+            file_path,
+            mimetype='audio/mpeg',
+            as_attachment=True,
+            download_name=os.path.basename(file_path)
+        )
 
     # Несколько файлов: архивируем
     zip_buffer = io.BytesIO()
@@ -808,7 +878,9 @@ def download_rendered_edit():
             payload.get('audio_date'),
             payload.get('audio_time')
         )
-        return send_file(
+        return _x_accel_redirect(
+            '/protected_temp_mp3/',
+            TEMP_MP3_FOLDER,
             final_path,
             mimetype='audio/mpeg',
             as_attachment=True,
@@ -824,7 +896,7 @@ def download_rendered_edit():
 def serve_temp_audio(filename):
     path = os.path.join(TEMP_MP3_FOLDER, filename)
     if os.path.exists(path):
-        return send_file(path, mimetype='audio/mpeg')
+        return _x_accel_redirect('/protected_temp_mp3/', TEMP_MP3_FOLDER, path, mimetype='audio/mpeg')
     return "Файл не найден", 404
 
 

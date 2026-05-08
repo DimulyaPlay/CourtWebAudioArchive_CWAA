@@ -17,8 +17,8 @@ MIN_AUDIO_YEAR = 2020
 version = "2.3"
 
 
-def cleanup_old_mp3_files():
-    while True:
+def cleanup_old_mp3_files(stop_event=None):
+    while not (stop_event and stop_event.is_set()):
         try:
             now = time.time()
             for filename in os.listdir(TEMP_MP3_FOLDER):
@@ -30,7 +30,10 @@ def cleanup_old_mp3_files():
                         print(f"[CLEANUP] Deleted: {file_path}")
         except Exception as e:
             pass
-        time.sleep(CHECK_INTERVAL_SECONDS)
+        if stop_event:
+            stop_event.wait(CHECK_INTERVAL_SECONDS)
+        else:
+            time.sleep(CHECK_INTERVAL_SECONDS)
 
 def get_available_courtrooms():
     if not os.path.exists(COURTROOMS_FILE):

@@ -35,6 +35,11 @@ def create_app():
         from .api import api
         app.register_blueprint(views, url_prefix='/')
         app.register_blueprint(api, url_prefix='/api/')
+
+        @app.route('/healthz')
+        def healthz():
+            return "ok", 200
+
         return app, ""
     except Exception as e:
         traceback.print_exc()

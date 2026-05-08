@@ -813,8 +813,14 @@
       return;
     }
 
+    const downloadUrl = `/api/download?${ids.map(function (id) { return `id=${encodeURIComponent(id)}`; }).join('&')}`;
+    if (ids.length === 1) {
+      window.location.href = downloadUrl;
+      return;
+    }
+
     showOverlay();
-    fetch(`/api/download?${ids.map(function (id) { return `id=${encodeURIComponent(id)}`; }).join('&')}`)
+    fetch(downloadUrl)
       .then(function (response) {
         if (!response.ok) {
           throw new Error(`Ошибка сервера: ${response.status}`);

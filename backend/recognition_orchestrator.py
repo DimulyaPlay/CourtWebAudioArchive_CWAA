@@ -11,7 +11,6 @@ from backend.utils import is_file_fully_copied
 import subprocess
 import sys
 
-RECOGNIZE_FOLDER = config['recognize_text_from_audio_path']
 MAX_PENDING_FILES = 20
 SLEEP_SECONDS = 20
 
@@ -94,12 +93,13 @@ def strip_replacement_tags(tagged_text):
     return re.sub(r'<replace><old>.*?</old><new>(.*?)</new><rule>\d+</rule></replace>', r'\1', tagged_text)
 
 
-def run_orchestrator_loop():
-    if not RECOGNIZE_FOLDER or not os.path.exists(RECOGNIZE_FOLDER):
+def run_orchestrator_loop(stop_event=None):
+    recognize_folder = config['recognize_text_from_audio_path']
+    if not recognize_folder or not os.path.exists(recognize_folder):
         return
     ASR_EXE = os.path.abspath(os.path.join(os.getcwd(), "GigaAM_ASR", "GigaAM_ASR.exe"))
     CHECK_INTERVAL_SECONDS = 60
-    while True:
+    while not (stop_event and stop_event.is_set()):
         session = None
         try:
             session = Session()
@@ -112,7 +112,10 @@ def run_orchestrator_loop():
                 )
             ).limit(MAX_PENDING_FILES).all()
             if not records:
-                time.sleep(CHECK_INTERVAL_SECONDS)
+                if stop_event:
+                    stop_event.wait(CHECK_INTERVAL_SECONDS)
+                else:
+                    time.sleep(CHECK_INTERVAL_SECONDS)
                 continue
             # 2) Убеждаемся, что mp3 лежат в папке распознавания (копируем недостающие)
             mp3_to_recognize = []
@@ -120,7 +123,7 @@ def run_orchestrator_loop():
                 source_path = record.file_path
                 base_filename = os.path.basename(source_path)
                 target_filename = f"{record.id}___{base_filename}"
-                target_path = os.path.join(RECOGNIZE_FOLDER, target_filename)
+                target_path = os.path.join(recognize_folder, target_filename)
                 if not os.path.exists(target_path):
                     shutil.copy2(source_path, target_path)
                     print(f"[ASR] Копируем {source_path} -> {target_path}")
@@ -128,7 +131,10 @@ def run_orchestrator_loop():
             # 3) Запускаем локальный ASR на всей пачке и ждём завершения
             if not os.path.exists(ASR_EXE):
                 print(f"[ASR] Не найден исполняемый файл: {ASR_EXE}")
-                time.sleep(CHECK_INTERVAL_SECONDS)
+                if stop_event:
+                    stop_event.wait(CHECK_INTERVAL_SECONDS)
+                else:
+                    time.sleep(CHECK_INTERVAL_SECONDS)
                 continue
             cmd = [ASR_EXE, *mp3_to_recognize]
             print(f"[ASR] Запуск: {' '.join(cmd[:3])}{' ...' if len(cmd) > 3 else ''}")
@@ -143,12 +149,15 @@ def run_orchestrator_loop():
                 print(f"[ASR] Ошибка распознавания. code={proc.returncode}")
                 if proc.stderr:
                     print(proc.stderr[-1500:])
-                time.sleep(CHECK_INTERVAL_SECONDS)
+                if stop_event:
+                    stop_event.wait(CHECK_INTERVAL_SECONDS)
+                else:
+                    time.sleep(CHECK_INTERVAL_SECONDS)
                 continue
             rules = get_phrase_replacement_rules()
             for record in records:
                 mp3_name = f"{record.id}___{os.path.basename(record.file_path)}"
-                recognize_mp3_path = os.path.join(RECOGNIZE_FOLDER, mp3_name)
+                recognize_mp3_path = os.path.join(recognize_folder, mp3_name)
                 recognize_txt_path = os.path.splitext(recognize_mp3_path)[0] + ".txt"
                 if not os.path.exists(recognize_txt_path):
                     print(f"[ASR] TXT не найден для {recognize_mp3_path}: ожидали {recognize_txt_path}")
@@ -186,7 +195,10 @@ def run_orchestrator_loop():
         except Exception as e:
             traceback.print_exc()
             print("[ASR] Ошибка в оркестраторе:", e)
-            time.sleep(CHECK_INTERVAL_SECONDS)
+            if stop_event:
+                stop_event.wait(CHECK_INTERVAL_SECONDS)
+            else:
+                time.sleep(CHECK_INTERVAL_SECONDS)
         finally:
             if session:
                 session.close()
