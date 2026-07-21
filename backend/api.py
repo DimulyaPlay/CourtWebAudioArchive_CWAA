@@ -36,6 +36,13 @@ FFMPEG_SEMAPHORE = Semaphore(2)  # максимум 2 задачи конвер�
 WAVEFORM_PEAK_COUNT = 600
 WAVEFORM_SAMPLE_RATE = 8000
 MIN_AUDIO_YEAR = 2020
+ARCHIVE_MP3_SAMPLE_RATE = '32000'
+ARCHIVE_MP3_BITRATE = '128k'
+FEMIDA_AUDIO_FILTER = (
+    'amix=inputs={inputs}:duration=longest:dropout_transition=2:normalize=0,'
+    'dynaudnorm=f=250:g=15:p=0.95:m=20,'
+    'alimiter=limit=0.95'
+)
 
 
 api = Blueprint('api', __name__)
@@ -61,6 +68,10 @@ def _relative_path_inside(file_path, base_path):
     return None
 
 
+def _is_windows_unc_path(path):
+    return os.name == 'nt' and os.path.abspath(path).startswith('\\\\')
+
+
 def _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='application/octet-stream',
                       as_attachment=False, download_name=None):
     base_abs = os.path.abspath(base_path)
@@ -68,6 +79,15 @@ def _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='applicati
     rel_path = _relative_path_inside(file_abs, base_abs)
     if not rel_path:
         return "Файл вне разрешенной директории", 403
+
+    if _is_windows_unc_path(base_abs):
+        return send_file(
+            file_abs,
+            mimetype=mimetype,
+            as_attachment=as_attachment,
+            download_name=download_name or os.path.basename(file_abs),
+            conditional=True
+        )
 
     response = Response(status=200)
     response.headers['X-Accel-Redirect'] = internal_prefix.rstrip('/') + '/' + quote(rel_path, safe='/')
@@ -208,6 +228,17 @@ def _run_ffprobe(file_path):
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or 'ffprobe failed')
     return float(result.stdout.strip())
+
+
+def _archive_mp3_encode_args():
+    return [
+        '-vn',
+        '-map_metadata', '-1',
+        '-codec:a', 'libmp3lame',
+        '-ac', '1',
+        '-ar', ARCHIVE_MP3_SAMPLE_RATE,
+        '-b:a', ARCHIVE_MP3_BITRATE,
+    ]
 
 
 def _get_waveform_cache_path(temp_path):
@@ -438,9 +469,7 @@ def _render_sources_to_temp_file(sources):
                         '-ss', f'{start:.3f}',
                         '-to', f'{end:.3f}',
                         '-i', temp_id,
-                        '-ac', '1',
-                        '-ar', '16000',
-                        '-q:a', '2',
+                        *_archive_mp3_encode_args(),
                         segment_path
                     ]
                     result = _run_ffmpeg(cmd)
@@ -472,9 +501,7 @@ def _render_sources_to_temp_file(sources):
                     '-f', 'concat',
                     '-safe', '0',
                     '-i', concat_manifest,
-                    '-ac', '1',
-                    '-ar', '16000',
-                    '-q:a', '2',
+                    *_archive_mp3_encode_args(),
                     final_path
                 ]
                 concat_result = _run_ffmpeg(concat_cmd)
@@ -775,7 +802,7 @@ def convert_case():
             concat_filter = ''.join([f'[{i}:0]' for i in range(len(group))])
             concat_filter += f'concat=n={len(group)}:v=0:a=1[out]'
             out_tmp = os.path.join(TEMP_MP3_FOLDER, f"intermediate_{idx}.wav")
-            cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'adpcm_ima_wav', out_tmp]
+            cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'pcm_s16le', out_tmp]
             result = _run_ffmpeg(cmd)
             if result.returncode != 0:
                 return jsonify({'error': f'ffmpeg concat error: {result.stderr[180:]}'}), 500
@@ -787,8 +814,10 @@ def convert_case():
         final_name = f"femida_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
         final_tmp = os.path.join(TEMP_MP3_FOLDER, final_name)
         mix_cmd += [
-            '-filter_complex', f'amix=inputs={len(intermediate_files)}:duration=longest:dropout_transition=2,volume=20dB',
-            '-ac', '1', '-ar', '16000', '-q:a', '2', final_tmp
+            '-filter_complex',
+            FEMIDA_AUDIO_FILTER.format(inputs=len(intermediate_files)),
+            *_archive_mp3_encode_args(),
+            final_tmp
         ]
         result = _run_ffmpeg(mix_cmd)
         if result.returncode != 0:
@@ -875,9 +904,7 @@ def render_edit():
                         '-ss', f'{start:.3f}',
                         '-to', f'{end:.3f}',
                         '-i', temp_id,
-                        '-ac', '1',
-                        '-ar', '16000',
-                        '-q:a', '2',
+                        *_archive_mp3_encode_args(),
                         segment_path
                     ]
                     result = _run_ffmpeg(cmd)
@@ -909,9 +936,7 @@ def render_edit():
                     '-f', 'concat',
                     '-safe', '0',
                     '-i', concat_manifest,
-                    '-ac', '1',
-                    '-ar', '16000',
-                    '-q:a', '2',
+                    *_archive_mp3_encode_args(),
                     final_path
                 ]
                 concat_result = _run_ffmpeg(concat_cmd)
