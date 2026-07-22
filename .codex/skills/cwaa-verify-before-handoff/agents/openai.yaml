@@ -1,0 +1,7 @@
+interface:
+  display_name: "CWAA Verify Before Handoff"
+  short_description: "Run focused checks and summarize CWAA changes before finishing."
+  default_prompt: "Use this skill before handing off a CWAA change to compile, syntax-check, smoke-test, and report residual risk."
+
+policy:
+  allow_implicit_invocation: true

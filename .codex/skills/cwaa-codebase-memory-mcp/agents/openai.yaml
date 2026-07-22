@@ -1,0 +1,7 @@
+interface:
+  display_name: "CWAA Codebase Memory MCP"
+  short_description: "Use the CWAA code graph for orientation, impact analysis, and index refresh."
+  default_prompt: "Use this skill to orient in CWAA through codebase-memory-mcp, confirm findings in source, and refresh the index after substantial code changes."
+
+policy:
+  allow_implicit_invocation: true

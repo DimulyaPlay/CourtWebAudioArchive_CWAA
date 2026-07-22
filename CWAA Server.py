@@ -18,7 +18,7 @@ from PySide2.QtWidgets import (QStyleFactory,
     QFileDialog, QTextEdit, QAbstractItemView)
 import sys
 import socket
-from backend.backup_service import BackupSettingsWindow
+from backend.backup_service import BackupSettingsWindow, BackupError, restore_backup_archive
 
 
 # .venv/Scripts/pyinstaller.exe --windowed --noupx --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx;nginx" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffmpeg.exe;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffprobe.exe;." "CWAA Server.py"
@@ -444,6 +444,8 @@ class MainWindow(QMainWindow):
 
         self.backup_button = QPushButton("🛠 Параметры резервного копирования")
         self.backup_button.clicked.connect(self.open_backup_settings)
+        self.restore_backup_button = QPushButton("♻ Восстановить из бэкапа")
+        self.restore_backup_button.clicked.connect(self.restore_from_backup)
 
         self.courtroom_button = QPushButton("🏛 Управление залами")
         self.courtroom_button.clicked.connect(self.open_courtroom_manager)
@@ -463,6 +465,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.firewall_button)
         layout.addWidget(self.scan_button)
         layout.addWidget(self.backup_button)
+        layout.addWidget(self.restore_backup_button)
         layout.addWidget(self.courtroom_button)
         layout.addWidget(self.path_migration_button)
         layout.addWidget(self.duplicate_resolver_button)
@@ -504,6 +507,81 @@ class MainWindow(QMainWindow):
         if not self.backup_window:
             self.backup_window = BackupSettingsWindow()
         self.backup_window.show()
+
+    def restore_from_backup(self):
+        if self.manager.service_status != "stopped":
+            QMessageBox.warning(
+                self,
+                "Восстановление недоступно",
+                "Остановите сервер перед восстановлением из бэкапа."
+            )
+            return
+
+        archive_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите ZIP-бэкап CWAA",
+            "",
+            "ZIP archives (*.zip)"
+        )
+        if not archive_path:
+            return
+
+        reply = QMessageBox.warning(
+            self,
+            "Подтвердите восстановление",
+            (
+                "Восстановление будет выполнено только если текущая база пуста, "
+                "а папки назначения из конфига бэкапа отсутствуют или пустые.\n\n"
+                "Продолжить?"
+            ),
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            result = restore_backup_archive(archive_path)
+            self.apply_restored_config(result['restored_config'])
+        except BackupError as exc:
+            QMessageBox.critical(self, "Восстановление не выполнено", str(exc))
+            return
+        except Exception as exc:
+            QMessageBox.critical(self, "Ошибка восстановления", str(exc))
+            return
+
+        restored_parts = []
+        if result['restored_db']:
+            restored_parts.append("база данных")
+        if result['restored_public']:
+            restored_parts.append("открытые аудиопротоколы")
+        if result['restored_closed']:
+            restored_parts.append("закрытые аудиопротоколы")
+        if result['restored_settings']:
+            restored_parts.append("конфиги")
+        QMessageBox.information(
+            self,
+            "Восстановление завершено",
+            "Восстановлено: " + ", ".join(restored_parts)
+        )
+
+    def apply_restored_config(self, restored_config):
+        server_ip = restored_config.get('server_ip', '')
+        if server_ip and self.server_ip_combo.findText(server_ip) < 0:
+            self.server_ip_combo.addItem(server_ip)
+        if server_ip:
+            self.server_ip_combo.setCurrentText(server_ip)
+        self.server_port_input.setText(str(restored_config.get('server_port', '')))
+        self.public_audio_path_input.setText(restored_config.get('public_audio_path', ''))
+        self.closed_audio_path_input.setText(restored_config.get('closed_audio_path', ''))
+        self.recognize_text_from_audio_path_input.setText(restored_config.get('recognize_text_from_audio_path', ''))
+        self.recognize_text_enabled.setChecked(str(restored_config.get('recognize_text_enabled', 'true')) == 'true')
+        self.recognize_text_default.setChecked(str(restored_config.get('recognize_text_default', 'false')) == 'true')
+        self.create_year_subfolders.setChecked(str(restored_config.get('create_year_subfolders', 'false')) == 'true')
+        self.update_app_link()
+        if self.backup_window:
+            self.backup_window.load_config()
+            self.backup_window.configure_schedule()
+            self.backup_window.update_next_backup_status()
 
     def open_courtroom_manager(self):
         if not hasattr(self, 'courtroom_window') or self.courtroom_window is None:
@@ -601,6 +679,7 @@ class MainWindow(QMainWindow):
         self.recognize_text_from_audio_path_input.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.backup_button.setEnabled(False)
+        self.restore_backup_button.setEnabled(False)
         self.courtroom_button.setEnabled(False)
         self.path_migration_button.setEnabled(False)
         self.duplicate_resolver_button.setEnabled(False)
@@ -626,6 +705,7 @@ class MainWindow(QMainWindow):
         self.recognize_text_from_audio_path_input.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.backup_button.setEnabled(False)
+        self.restore_backup_button.setEnabled(False)
         self.courtroom_button.setEnabled(False)
         self.path_migration_button.setEnabled(False)
         self.duplicate_resolver_button.setEnabled(False)
@@ -660,6 +740,7 @@ class MainWindow(QMainWindow):
         self.recognize_text_from_audio_path_input.setEnabled(True)
         self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
         self.backup_button.setEnabled(True)
+        self.restore_backup_button.setEnabled(True)
         self.courtroom_button.setEnabled(True)
         self.path_migration_button.setEnabled(True)
         self.duplicate_resolver_button.setEnabled(True)

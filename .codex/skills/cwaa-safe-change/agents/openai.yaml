@@ -1,0 +1,7 @@
+interface:
+  display_name: "CWAA Safe Change"
+  short_description: "Work safely in CWAA without damaging unrelated code or local archive data."
+  default_prompt: "Use this skill before changing CWAA code so edits stay narrow, reversible, and verified."
+
+policy:
+  allow_implicit_invocation: true
