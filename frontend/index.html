@@ -115,9 +115,9 @@
                 <i class="bi bi-skip-start-fill"></i> К началу
               </button>
               <div class="final-timeline-readout">
-                <span id="final-timeline-current-time">0:00.0</span>
+                <span id="final-timeline-current-time">00:00:00</span>
                 <span class="text-muted">/</span>
-                <span id="final-timeline-total-time">0:00.0</span>
+                <span id="final-timeline-total-time">00:00:00</span>
               </div>
             </div>
           </div>
@@ -245,6 +245,17 @@
               <div class="editor-selection" id="editor-selection"></div>
               <div class="editor-cut-region" id="editor-cut-region"></div>
               <div class="editor-playhead" id="editor-playhead"></div>
+              <div class="editor-boundary-markers" id="editor-boundary-markers"></div>
+              <div class="editor-boundary-hint d-none" id="editor-boundary-hint">
+                Двигайте якоря на волне, чтобы задать границы обрезки
+              </div>
+              <div class="editor-boundary-popover d-none" id="editor-boundary-popover">
+                <div class="editor-boundary-popover-title" id="editor-boundary-popover-title"></div>
+                <div class="input-group input-group-sm">
+                  <input class="form-control" id="editor-boundary-time-input" inputmode="numeric" placeholder="00:00:00" type="text">
+                  <button class="btn btn-primary" id="editor-boundary-time-apply" type="button">OK</button>
+                </div>
+              </div>
             </div>
             <div class="small text-muted mb-3" id="editor-waveform-note"></div>
 
@@ -256,10 +267,16 @@
                 <button class="btn btn-outline-secondary" id="editor-jump-start" type="button">
                   <i class="bi bi-skip-start-fill"></i> К началу фрагмента
                 </button>
+                <button class="btn btn-outline-secondary" id="editor-set-start" title="Установить начало по каретке" type="button">
+                  |&gt;
+                </button>
+                <button class="btn btn-outline-secondary" id="editor-set-end" title="Установить конец по каретке" type="button">
+                  &lt;|
+                </button>
                 <div class="editor-time-readout">
-                  <span id="editor-current-time">0:00.0</span>
+                  <span id="editor-current-time">00:00:00</span>
                   <span class="text-muted">/</span>
-                  <span id="editor-active-range">0:00.0 - 0:00.0</span>
+                  <span id="editor-active-range">00:00:00 - 00:00:00</span>
                 </div>
               </div>
               <div class="editor-secondary-controls">
@@ -284,45 +301,6 @@
               </div>
             </div>
 
-            <div class="row g-2 mb-2" id="trim-controls">
-              <div class="col-6">
-                <label class="form-label small mb-1" for="trim-start-range">Начало</label>
-                <input class="form-range" id="trim-start-range" min="0" step="0.1" type="range">
-                <input class="form-control form-control-sm" id="trim-start-input" step="0.1" type="number">
-              </div>
-              <div class="col-6">
-                <label class="form-label small mb-1" for="trim-end-range">Конец</label>
-                <input class="form-range" id="trim-end-range" min="0" step="0.1" type="range">
-                <input class="form-control form-control-sm" id="trim-end-input" step="0.1" type="number">
-              </div>
-            </div>
-
-            <div id="cut-controls" style="display:none;">
-              <div class="row g-2 mb-2">
-                <div class="col-6">
-                  <label class="form-label small mb-1" for="first-segment-start-range">Начало первого сегмента</label>
-                  <input class="form-range" id="first-segment-start-range" min="0" step="0.1" type="range">
-                  <input class="form-control form-control-sm" id="first-segment-start-input" step="0.1" type="number">
-                </div>
-                <div class="col-6">
-                  <label class="form-label small mb-1" for="first-segment-end-range">Конец первого сегмента</label>
-                  <input class="form-range" id="first-segment-end-range" min="0" step="0.1" type="range">
-                  <input class="form-control form-control-sm" id="first-segment-end-input" step="0.1" type="number">
-                </div>
-              </div>
-              <div class="row g-2">
-                <div class="col-6">
-                  <label class="form-label small mb-1" for="second-segment-start-range">Начало второго сегмента</label>
-                  <input class="form-range" id="second-segment-start-range" min="0" step="0.1" type="range">
-                  <input class="form-control form-control-sm" id="second-segment-start-input" step="0.1" type="number">
-                </div>
-                <div class="col-6">
-                  <label class="form-label small mb-1" for="second-segment-end-range">Конец второго сегмента</label>
-                  <input class="form-range" id="second-segment-end-range" min="0" step="0.1" type="range">
-                  <input class="form-control form-control-sm" id="second-segment-end-input" step="0.1" type="number">
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -400,6 +378,9 @@
       const audioEditorModal = new bootstrap.Modal(document.getElementById('audioEditorModal'));
       const editorAudio = $('#editor-audio')[0];
       const editorTimeline = $('#editor-timeline');
+      const editorBoundaryMarkers = $('#editor-boundary-markers');
+      const editorBoundaryPopover = $('#editor-boundary-popover');
+      const editorBoundaryHint = $('#editor-boundary-hint');
       const editorWaveform = document.getElementById('editor-waveform');
       const finalPreviewAudio = document.getElementById('final-preview-audio');
       const finalTimelineBar = $('#final-timeline-bar');
@@ -417,6 +398,9 @@
       let finalPreviewSegmentIndex = -1;
       let finalPreviewWantsPlay = false;
       let finalPreviewPendingMetadataHandler = null;
+      let selectedBoundaryKey = null;
+      let draggingBoundaryKey = null;
+      let boundaryHintTimeout = null;
       const hideWelcomeModalKey = 'cwaa_hide_welcome_modal';
       const sessionWelcomeModalKey = 'cwaa_welcome_modal_shown';
 
@@ -434,10 +418,40 @@
       }
 
       function formatSeconds(value) {
-        const total = Math.max(0, Math.round(Number(value || 0) * 10) / 10);
-        const minutes = Math.floor(total / 60);
-        const seconds = (total % 60).toFixed(1).padStart(4, '0');
-        return `${minutes}:${seconds}`;
+        const total = Math.max(0, Math.round(Number(value || 0)));
+        const hours = Math.floor(total / 3600);
+        const minutes = Math.floor((total % 3600) / 60);
+        const seconds = total % 60;
+        return [hours, minutes, seconds]
+          .map(part => String(part).padStart(2, '0'))
+          .join(':');
+      }
+
+      function parseTimeInput(value) {
+        const text = String(value || '').trim().replace(',', '.');
+        if (!text) return NaN;
+        if (!text.includes(':')) {
+          return Number(text);
+        }
+
+        const parts = text.split(':').map(part => part.trim());
+        if (parts.length > 3 || parts.some(part => part === '' || !/^\d+(?:\.\d+)?$/.test(part))) {
+          return NaN;
+        }
+
+        const values = parts.map(Number);
+        if (values.some(value => !Number.isFinite(value))) {
+          return NaN;
+        }
+
+        if (values.length === 3) {
+          return (values[0] * 3600) + (values[1] * 60) + values[2];
+        }
+        return (values[0] * 60) + values[1];
+      }
+
+      function setTimeInputValue(selector, seconds) {
+        $(selector).val(formatSeconds(seconds));
       }
 
       function markFormChanged() {
@@ -784,8 +798,8 @@
           $('#final-timeline-caption').text('');
           stopFinalPreview(true);
           $('#final-timeline-bar').css('--final-playhead-left', '0%');
-          $('#final-timeline-current-time').text('0:00.0');
-          $('#final-timeline-total-time').text('0:00.0');
+          $('#final-timeline-current-time').text('00:00:00');
+          $('#final-timeline-total-time').text('00:00:00');
           return;
         }
 
@@ -829,7 +843,7 @@
 
       function getActiveRangeLabel(source) {
         const segments = getPlayableSegments(source);
-        if (!segments.length) return '0:00.0 - 0:00.0';
+        if (!segments.length) return '00:00:00 - 00:00:00';
         return `${formatSeconds(segments[0].start)} - ${formatSeconds(segments[segments.length - 1].end)}`;
       }
 
@@ -947,7 +961,9 @@
         if (!source || !source.duration) {
           $('#editor-selection').css({ left: '0%', width: '0%' });
           $('#editor-cut-region').hide();
-          $('#editor-active-range').text('0:00.0 - 0:00.0');
+          $('#editor-active-range').text('00:00:00 - 00:00:00');
+          editorBoundaryMarkers.empty();
+          editorBoundaryPopover.addClass('d-none');
           updateWaveformNote(null);
           drawWaveform(null);
           return;
@@ -964,6 +980,8 @@
           $('#editor-cut-region').hide();
         }
         $('#editor-active-range').text(getActiveRangeLabel(source));
+        renderBoundaryMarkers(source);
+        updateBoundaryPopoverPosition(source);
         drawWaveform(source);
         updatePlaybackUI();
       }
@@ -974,9 +992,11 @@
           editorAudio.pause();
           editorAudio.removeAttribute('src');
           editorAudio.load();
-          $('#editor-current-time').text('0:00.0');
-          $('#editor-active-range').text('0:00.0 - 0:00.0');
+          $('#editor-current-time').text('00:00:00');
+          $('#editor-active-range').text('00:00:00 - 00:00:00');
           $('#editor-playhead').css('left', '0%');
+          editorBoundaryMarkers.empty();
+          editorBoundaryPopover.addClass('d-none');
           updateWaveformNote(null);
           updatePlayButton();
           drawWaveform(null);
@@ -985,6 +1005,13 @@
 
         $('#editor-source-name').text(source.name);
         $('#editor-source-duration').text(`Длительность: ${formatSeconds(source.duration)}`);
+        if (source.mode === 'cut') {
+          $('#editor-set-start').attr('title', 'Установить начало вырезки по каретке');
+          $('#editor-set-end').attr('title', 'Установить конец вырезки по каретке');
+        } else {
+          $('#editor-set-start').attr('title', 'Установить начало по каретке');
+          $('#editor-set-end').attr('title', 'Установить конец по каретке');
+        }
         const gainPercent = Math.round((gainNode?.gain.value ?? 1) * 100);
         $('#editor-volume-range').val(gainPercent);
         $('#editor-volume-value').text(`${gainPercent}%`);
@@ -995,90 +1022,18 @@
           editorAudio.load();
         }
 
-        [
-          'trim-start-range',
-          'trim-end-range',
-          'first-segment-start-range',
-          'first-segment-end-range',
-          'second-segment-start-range',
-          'second-segment-end-range'
-        ].forEach(id => {
-          $(`#${id}`).attr('max', source.duration.toFixed(1));
-        });
-
-        $('#trim-start-range').val(source.trim_start);
-        $('#trim-end-range').val(source.trim_end);
-        $('#trim-start-input').val(source.trim_start.toFixed(1));
-        $('#trim-end-input').val(source.trim_end.toFixed(1));
-        $('#first-segment-start-range').val(source.trim_start);
-        $('#first-segment-end-range').val(source.cut_start);
-        $('#second-segment-start-range').val(source.cut_end);
-        $('#second-segment-end-range').val(source.trim_end);
-        $('#first-segment-start-input').val(source.trim_start.toFixed(1));
-        $('#first-segment-end-input').val(source.cut_start.toFixed(1));
-        $('#second-segment-start-input').val(source.cut_end.toFixed(1));
-        $('#second-segment-end-input').val(source.trim_end.toFixed(1));
-
         $('.editor-mode-switch button').each(function () {
           const isActive = $(this).data('mode') === source.mode;
           $(this).toggleClass('btn-primary', isActive).toggleClass('btn-outline-primary', !isActive);
         });
-        $('#trim-controls').toggle(source.mode === 'trim');
-        $('#cut-controls').toggle(source.mode === 'cut');
+        if (!getBoundaryDefinition(source, selectedBoundaryKey)) {
+          selectedBoundaryKey = null;
+          editorBoundaryPopover.addClass('d-none');
+        }
 
         updateTimeline(source);
         renderSourceList();
         ensureWaveformData(source);
-      }
-
-      function applyEditorValues() {
-        const source = getSource(selectedSourceId);
-        if (!source) return;
-
-        let trimStart = Number($('#trim-start-input').val());
-        let trimEnd = Number($('#trim-end-input').val());
-        trimStart = clamp(isNaN(trimStart) ? 0 : trimStart, 0, source.duration);
-        trimEnd = clamp(isNaN(trimEnd) ? source.duration : trimEnd, trimStart, source.duration);
-
-        if (source.mode === 'cut') {
-          let firstStart = Number($('#first-segment-start-input').val());
-          let firstEnd = Number($('#first-segment-end-input').val());
-          let secondStart = Number($('#second-segment-start-input').val());
-          let secondEnd = Number($('#second-segment-end-input').val());
-          firstStart = clamp(isNaN(firstStart) ? source.trim_start : firstStart, 0, source.duration);
-          firstEnd = clamp(isNaN(firstEnd) ? source.cut_start : firstEnd, firstStart, source.duration);
-          secondStart = clamp(isNaN(secondStart) ? source.cut_end : secondStart, firstEnd, source.duration);
-          secondEnd = clamp(isNaN(secondEnd) ? source.trim_end : secondEnd, secondStart, source.duration);
-          source.trim_start = firstStart;
-          source.cut_start = firstEnd;
-          source.cut_end = secondStart;
-          source.trim_end = secondEnd;
-        } else {
-          source.trim_start = trimStart;
-          source.trim_end = trimEnd;
-          source.cut_start = clamp(source.cut_start, trimStart, trimEnd);
-          source.cut_end = clamp(source.cut_end, source.cut_start, trimEnd);
-        }
-
-        $('#trim-start-range').val(source.trim_start);
-        $('#trim-end-range').val(source.trim_end);
-        $('#trim-start-input').val(source.trim_start.toFixed(1));
-        $('#trim-end-input').val(source.trim_end.toFixed(1));
-        $('#first-segment-start-range').val(source.trim_start);
-        $('#first-segment-end-range').val(source.cut_start);
-        $('#second-segment-start-range').val(source.cut_end);
-        $('#second-segment-end-range').val(source.trim_end);
-        $('#first-segment-start-input').val(source.trim_start.toFixed(1));
-        $('#first-segment-end-input').val(source.cut_start.toFixed(1));
-        $('#second-segment-start-input').val(source.cut_end.toFixed(1));
-        $('#second-segment-end-input').val(source.trim_end.toFixed(1));
-
-        updateTimeline(source);
-        renderSourceList();
-        editorAudio.currentTime = snapTimeToPlayable(editorAudio.currentTime || 0, source);
-        updatePlaybackUI();
-        $('#final_temp_id').val('');
-        markFormChanged();
       }
 
       function selectSource(sourceId) {
@@ -1120,6 +1075,150 @@
         if (!source) return;
         editorAudio.currentTime = snapTimeToPlayable(time, source);
         updatePlaybackUI();
+      }
+
+      function getBoundaryDefinitions(source) {
+        if (!source) return [];
+        if (source.mode === 'cut') {
+          return [
+            { key: 'trim_start', label: 'Начало', className: 'edge' },
+            { key: 'cut_start', label: 'Начало вырезки', className: 'cut' },
+            { key: 'cut_end', label: 'Конец вырезки', className: 'cut' },
+            { key: 'trim_end', label: 'Конец', className: 'edge' }
+          ];
+        }
+        return [
+          { key: 'trim_start', label: 'Начало', className: 'edge' },
+          { key: 'trim_end', label: 'Конец', className: 'edge' }
+        ];
+      }
+
+      function getBoundaryDefinition(source, key) {
+        return getBoundaryDefinitions(source).find(item => item.key === key) || null;
+      }
+
+      function getBoundaryBounds(source, key) {
+        if (!source) return { min: 0, max: 0 };
+        if (key === 'trim_start') {
+          return { min: 0, max: source.mode === 'cut' ? source.cut_start : source.trim_end };
+        }
+        if (key === 'cut_start') {
+          return { min: source.trim_start, max: source.cut_end };
+        }
+        if (key === 'cut_end') {
+          return { min: source.cut_start, max: source.trim_end };
+        }
+        if (key === 'trim_end') {
+          return { min: source.mode === 'cut' ? source.cut_end : source.trim_start, max: source.duration };
+        }
+        return { min: 0, max: source.duration };
+      }
+
+      function setSourceBoundary(source, key, value) {
+        if (!source || !Number.isFinite(value)) return;
+        const bounds = getBoundaryBounds(source, key);
+        source[key] = clamp(value, bounds.min, bounds.max);
+      }
+
+      function getTimelineTimeFromPointer(clientX, source) {
+        const rect = editorTimeline[0].getBoundingClientRect();
+        const ratio = rect.width ? clamp((clientX - rect.left) / rect.width, 0, 1) : 0;
+        return (source?.duration || 0) * ratio;
+      }
+
+      function renderBoundaryMarkers(source) {
+        editorBoundaryMarkers.empty();
+        if (!source || !source.duration) return;
+
+        const markers = getBoundaryDefinitions(source).map(definition => {
+          const left = (source[definition.key] / source.duration) * 100;
+          const marker = $('<button>')
+            .addClass(`editor-boundary-marker ${definition.className}`)
+            .toggleClass('active', selectedBoundaryKey === definition.key)
+            .attr('type', 'button')
+            .attr('title', `${definition.label}: ${formatSeconds(source[definition.key])}`)
+            .attr('data-boundary', definition.key)
+            .css('left', `${left}%`);
+          marker.append($('<span>').addClass('editor-boundary-label').text(definition.label));
+          return marker[0];
+        });
+        editorBoundaryMarkers.append(markers);
+      }
+
+      function showBoundaryPopover(source, key) {
+        const definition = getBoundaryDefinition(source, key);
+        if (!source || !definition) {
+          editorBoundaryPopover.addClass('d-none');
+          return;
+        }
+        selectedBoundaryKey = key;
+        $('#editor-boundary-popover-title').text(definition.label);
+        setTimeInputValue('#editor-boundary-time-input', source[key]);
+        renderBoundaryMarkers(source);
+        editorBoundaryPopover.removeClass('d-none');
+        updateBoundaryPopoverPosition(source);
+        $('#editor-boundary-time-input').trigger('select');
+      }
+
+      function updateBoundaryPopoverPosition(source) {
+        if (editorBoundaryPopover.hasClass('d-none') || !selectedBoundaryKey || !source?.duration) return;
+        const timelineWidth = editorTimeline.innerWidth();
+        const popoverWidth = editorBoundaryPopover.outerWidth();
+        const rawLeft = (source[selectedBoundaryKey] / source.duration) * timelineWidth;
+        const left = clamp(rawLeft - (popoverWidth / 2), 8, Math.max(8, timelineWidth - popoverWidth - 8));
+        editorBoundaryPopover.css('left', `${left}px`);
+      }
+
+      function commitBoundaryPopoverValue() {
+        const source = getSource(selectedSourceId);
+        if (!source || !selectedBoundaryKey) return false;
+        const value = parseTimeInput($('#editor-boundary-time-input').val());
+        if (!Number.isFinite(value)) {
+          setTimeInputValue('#editor-boundary-time-input', source[selectedBoundaryKey]);
+          return false;
+        }
+        setSourceBoundary(source, selectedBoundaryKey, value);
+        updateTimeline(source);
+        renderSourceList();
+        $('#final_temp_id').val('');
+        markFormChanged();
+        return true;
+      }
+
+      function showBoundaryHint() {
+        if (!editorBoundaryHint.length) return;
+        if (boundaryHintTimeout) {
+          clearTimeout(boundaryHintTimeout);
+          boundaryHintTimeout = null;
+        }
+        editorBoundaryHint.removeClass('d-none').addClass('visible');
+        boundaryHintTimeout = setTimeout(function () {
+          editorBoundaryHint.removeClass('visible');
+          boundaryHintTimeout = setTimeout(function () {
+            editorBoundaryHint.addClass('d-none');
+            boundaryHintTimeout = null;
+          }, 220);
+        }, 2400);
+      }
+
+      function setEditorBoundaryFromPlayhead(boundary) {
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        const currentTime = clamp(editorAudio.currentTime || 0, 0, source.duration);
+        const targetBoundary = source.mode === 'cut'
+          ? (boundary === 'start' ? 'cut_start' : 'cut_end')
+          : (boundary === 'start' ? 'trim_start' : 'trim_end');
+
+        setSourceBoundary(source, targetBoundary, currentTime);
+        selectedBoundaryKey = targetBoundary;
+
+        updateTimeline(source);
+        showBoundaryPopover(source, targetBoundary);
+        renderSourceList();
+        editorAudio.currentTime = snapTimeToPlayable(currentTime, source);
+        updatePlaybackUI();
+        $('#final_temp_id').val('');
+        markFormChanged();
       }
 
       function getPlaybackStartTime(source, segments) {
@@ -1392,6 +1491,14 @@
         seekEditorTo(firstSegment.start);
       });
 
+      $('#editor-set-start').on('click', function () {
+        setEditorBoundaryFromPlayhead('start');
+      });
+
+      $('#editor-set-end').on('click', function () {
+        setEditorBoundaryFromPlayhead('end');
+      });
+
       $('#editor-volume-range').on('input change', function () {
         const volumePercent = Number($(this).val()) || 0;
         ensureAudioGraph();
@@ -1405,6 +1512,7 @@
       });
 
       editorTimeline.on('click', function (e) {
+        if ($(e.target).closest('.editor-boundary-marker, .editor-boundary-popover').length) return;
         const source = getSource(selectedSourceId);
         if (!source || !source.duration) return;
         const rect = this.getBoundingClientRect();
@@ -1412,21 +1520,85 @@
         seekEditorTo(source.duration * ratio);
       });
 
+      editorBoundaryMarkers.on('pointerdown', '.editor-boundary-marker', function (e) {
+        const source = getSource(selectedSourceId);
+        const key = $(this).data('boundary');
+        if (!source || !key) return;
+        e.preventDefault();
+        e.stopPropagation();
+        draggingBoundaryKey = key;
+        selectedBoundaryKey = key;
+        showBoundaryPopover(source, key);
+        this.setPointerCapture?.(e.originalEvent.pointerId);
+      });
+
+      $(document).on('pointermove', function (e) {
+        if (!draggingBoundaryKey) return;
+        const source = getSource(selectedSourceId);
+        if (!source) return;
+        e.preventDefault();
+        setSourceBoundary(source, draggingBoundaryKey, getTimelineTimeFromPointer(e.clientX, source));
+        updateTimeline(source);
+        setTimeInputValue('#editor-boundary-time-input', source[draggingBoundaryKey]);
+        $('#final_temp_id').val('');
+      });
+
+      $(document).on('pointerup pointercancel', function () {
+        if (!draggingBoundaryKey) return;
+        draggingBoundaryKey = null;
+        renderSourceList();
+        markFormChanged();
+      });
+
+      editorBoundaryPopover.on('click pointerdown', function (e) {
+        e.stopPropagation();
+      });
+
+      $('#editor-boundary-time-apply').on('click', function () {
+        if (commitBoundaryPopoverValue()) {
+          editorBoundaryPopover.addClass('d-none');
+          selectedBoundaryKey = null;
+          renderBoundaryMarkers(getSource(selectedSourceId));
+        }
+      });
+
+      $('#editor-boundary-time-input').on('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (commitBoundaryPopoverValue()) {
+            editorBoundaryPopover.addClass('d-none');
+            selectedBoundaryKey = null;
+            renderBoundaryMarkers(getSource(selectedSourceId));
+          }
+        }
+      }).on('change', function () {
+        commitBoundaryPopoverValue();
+      });
+
       $('#audioEditorModal').on('hidden.bs.modal', function () {
         if (editorAudio) {
           editorAudio.pause();
         }
         stopPlaybackAnimation();
+        draggingBoundaryKey = null;
+        editorBoundaryPopover.addClass('d-none');
+        editorBoundaryHint.addClass('d-none').removeClass('visible');
+        if (boundaryHintTimeout) {
+          clearTimeout(boundaryHintTimeout);
+          boundaryHintTimeout = null;
+        }
       });
 
       $('#audioEditorModal').on('shown.bs.modal', function () {
         const source = getSource(selectedSourceId);
         drawWaveform(source);
         updatePlaybackUI();
+        showBoundaryHint();
       });
 
       $(window).on('resize', function () {
         drawWaveform(getSource(selectedSourceId));
+        updateTimeline(getSource(selectedSourceId));
         updateFinalTimelinePlaybackUI();
       });
 
@@ -1558,18 +1730,6 @@
         source.cut_end = source.duration * 2 / 3;
         syncEditorFromSource();
         markFormChanged();
-      });
-
-      $('#trim-start-range, #trim-end-range, #first-segment-start-range, #first-segment-end-range, #second-segment-start-range, #second-segment-end-range').on('input', function () {
-        const mappedInput = $(this).attr('id').replace('-range', '-input');
-        $(`#${mappedInput}`).val($(this).val());
-        applyEditorValues();
-      });
-
-      $('#trim-start-input, #trim-end-input, #first-segment-start-input, #first-segment-end-input, #second-segment-start-input, #second-segment-end-input').on('input', function () {
-        const mappedRange = $(this).attr('id').replace('-input', '-range');
-        $(`#${mappedRange}`).val($(this).val());
-        applyEditorValues();
       });
 
       $('#final-timeline-play-toggle').on('click', function () {
@@ -2127,6 +2287,142 @@
       background: #ffffff;
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
       pointer-events: none;
+    }
+
+    .editor-boundary-markers {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .editor-boundary-marker {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 24px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      transform: translateX(-50%);
+      cursor: ew-resize;
+      pointer-events: auto;
+      touch-action: none;
+    }
+
+    .editor-boundary-marker::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 3px;
+      transform: translateX(-50%);
+      background: #00f0ff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 14px rgba(0, 240, 255, 0.55);
+    }
+
+    .editor-boundary-marker::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 16px;
+      height: 16px;
+      transform: translate(-50%, -50%) rotate(45deg);
+      border: 3px solid #00f0ff;
+      background: #1f3d6b;
+      box-shadow: 0 0 0 2px rgba(31, 61, 107, 0.75);
+    }
+
+    .editor-boundary-marker.cut::before {
+      background: #ff5c8a;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 14px rgba(255, 92, 138, 0.5);
+    }
+
+    .editor-boundary-marker.cut::after {
+      border-color: #ff5c8a;
+    }
+
+    .editor-boundary-marker.active::after,
+    .editor-boundary-marker:focus-visible::after {
+      background: #ffffff;
+    }
+
+    .editor-boundary-label {
+      position: absolute;
+      left: 50%;
+      bottom: 10px;
+      max-width: 130px;
+      padding: 0.15rem 0.4rem;
+      border-radius: 0.35rem;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.92);
+      color: #1f2937;
+      font-size: 0.72rem;
+      line-height: 1.1;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s ease;
+    }
+
+    .editor-boundary-marker:hover .editor-boundary-label,
+    .editor-boundary-marker.active .editor-boundary-label,
+    .editor-boundary-marker:focus-visible .editor-boundary-label {
+      opacity: 1;
+    }
+
+    .editor-boundary-popover {
+      position: absolute;
+      top: 6px;
+      z-index: 8;
+      width: 176px;
+      padding: 0.45rem;
+      border-radius: 0.45rem;
+      background: #ffffff;
+      border: 1px solid rgba(31, 61, 107, 0.2);
+      box-shadow: 0 0.45rem 1rem rgba(15, 23, 42, 0.16);
+    }
+
+    .editor-boundary-popover-title {
+      margin-bottom: 0.3rem;
+      color: #1f3d6b;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+
+    .editor-boundary-popover .form-control,
+    .editor-boundary-popover .btn {
+      padding-top: 0.22rem;
+      padding-bottom: 0.22rem;
+      font-size: 0.78rem;
+      line-height: 1.2;
+    }
+
+    .editor-boundary-hint {
+      position: absolute;
+      left: 50%;
+      top: 12px;
+      z-index: 7;
+      max-width: min(420px, calc(100% - 2rem));
+      padding: 0.45rem 0.7rem;
+      border-radius: 0.45rem;
+      transform: translateX(-50%) translateY(-6px);
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(31, 61, 107, 0.18);
+      color: #1f2937;
+      font-size: 0.82rem;
+      font-weight: 500;
+      text-align: center;
+      box-shadow: 0 0.5rem 1.2rem rgba(15, 23, 42, 0.16);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+    }
+
+    .editor-boundary-hint.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
 
     .editor-player-controls {
