@@ -16,6 +16,7 @@ from backend.path_resolver import (
     resolve_record_audio_path,
     resolve_record_text_path
 )
+from backend.runtime_paths import has_nginx_audio_root_for_config_path
 from sqlalchemy import desc, or_
 import zipfile
 import io
@@ -72,6 +73,18 @@ def _is_windows_unc_path(path):
     return os.name == 'nt' and os.path.abspath(path).startswith('\\\\')
 
 
+def _has_nginx_runtime_root_for_base(base_path):
+    storages = (
+        ('public', config.get('public_audio_path')),
+        ('closed', config.get('closed_audio_path')),
+    )
+    base_abs = os.path.normcase(os.path.abspath(base_path))
+    for storage_name, config_path in storages:
+        if config_path and os.path.normcase(os.path.abspath(config_path)) == base_abs:
+            return has_nginx_audio_root_for_config_path(storage_name, config_path)
+    return False
+
+
 def _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='application/octet-stream',
                       as_attachment=False, download_name=None):
     base_abs = os.path.abspath(base_path)
@@ -80,7 +93,7 @@ def _x_accel_redirect(internal_prefix, base_path, file_path, mimetype='applicati
     if not rel_path:
         return "Файл вне разрешенной директории", 403
 
-    if _is_windows_unc_path(base_abs):
+    if _is_windows_unc_path(base_abs) and not _has_nginx_runtime_root_for_base(base_abs):
         return send_file(
             file_abs,
             mimetype=mimetype,

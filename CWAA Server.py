@@ -12,6 +12,7 @@ from string import Template
 import os
 import threading
 import psutil
+import ctypes
 from PySide2.QtWidgets import (QStyleFactory,
     QMainWindow, QApplication, QPushButton, QLabel, QVBoxLayout, QWidget, QLineEdit, QFormLayout, QMessageBox,
     QComboBox, QSystemTrayIcon, QMenu, QAction, QCheckBox, QListWidget, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -19,6 +20,7 @@ from PySide2.QtWidgets import (QStyleFactory,
 import sys
 import socket
 from backend.backup_service import BackupSettingsWindow, BackupError, restore_backup_archive
+from backend.runtime_paths import clear_nginx_audio_roots, set_nginx_audio_root
 
 
 # .venv/Scripts/pyinstaller.exe --windowed --noupx --noconfirm --contents-directory "." --icon "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\cwaa-icon.ico;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\assets;assets" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\frontend;frontend" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\nginx;nginx" --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffmpeg.exe;." --add-data "C:\Users\CourtUser\PycharmProjects\CourtWebAudioArchive(CWAA)\ffprobe.exe;." "CWAA Server.py"
@@ -97,6 +99,92 @@ def _nginx_path(path):
     return os.path.abspath(path).replace('\\', '/')
 
 
+def _is_windows_unc_path(path):
+    return os.name == 'nt' and path and os.path.abspath(path).startswith('\\\\')
+
+
+def _used_drive_letters():
+    if os.name != 'nt':
+        return set()
+    mask = ctypes.windll.kernel32.GetLogicalDrives()
+    return {
+        chr(ord('A') + index)
+        for index in range(26)
+        if mask & (1 << index)
+    }
+
+
+class NetworkDriveMountManager:
+    def __init__(self):
+        self.mounts = {}
+        self._unc_to_drive = {}
+
+    def _find_free_drive(self):
+        used = _used_drive_letters()
+        for letter in reversed('ZYXWVUTSRQPONMLKJIHGFED'):
+            if letter not in used and letter not in self.mounts:
+                return letter
+        return None
+
+    def mount_for_nginx(self, storage_name, path):
+        if not _is_windows_unc_path(path):
+            set_nginx_audio_root(storage_name, path)
+            return path
+
+        unc_path = os.path.abspath(path)
+        normalized_unc = os.path.normcase(unc_path)
+        if normalized_unc in self._unc_to_drive:
+            mapped_path = self._unc_to_drive[normalized_unc]
+            set_nginx_audio_root(storage_name, mapped_path)
+            return mapped_path
+
+        letter = self._find_free_drive()
+        if not letter:
+            print(f"[nginx] Нет свободной буквы диска для {unc_path}; используется Flask fallback")
+            set_nginx_audio_root(storage_name, None)
+            return path
+        drive = f'{letter}:'
+        result = subprocess.run(
+            ['net', 'use', drive, unc_path, '/persistent:no'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors='replace'
+        )
+        if result.returncode != 0:
+            message = (result.stderr or result.stdout or '').strip()
+            print(f"[nginx] Не удалось подключить {unc_path} как {drive}: {message}; используется Flask fallback")
+            set_nginx_audio_root(storage_name, None)
+            return path
+
+        mapped_path = f'{drive}\\'
+        self.mounts[letter] = unc_path
+        self._unc_to_drive[normalized_unc] = mapped_path
+        set_nginx_audio_root(storage_name, mapped_path)
+        print(f"[nginx] UNC audio root mounted: {unc_path} -> {mapped_path}")
+        return mapped_path
+
+    def unmount_all(self):
+        for letter in list(self.mounts.keys()):
+            drive = f'{letter}:'
+            try:
+                result = subprocess.run(
+                    ['net', 'use', drive, '/delete', '/y'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    errors='replace'
+                )
+                if result.returncode != 0:
+                    message = (result.stderr or result.stdout or '').strip()
+                    print(f"[nginx] Не удалось отключить {drive}: {message}")
+            except Exception as exc:
+                print(f"[nginx] Ошибка отключения {drive}: {exc}")
+        self.mounts.clear()
+        self._unc_to_drive.clear()
+        clear_nginx_audio_roots()
+
+
 def _is_port_free(host, port):
     try:
         with socket.create_connection((host, int(port)), timeout=0.5):
@@ -147,10 +235,13 @@ def _wait_for_http(host, port, timeout=8, request_timeout=0.25, interval=0.1, pa
     return False, str(last_error or "нет ответа")
 
 
-def generate_nginx_config(server_ip, external_port, internal_port):
+def generate_nginx_config(server_ip, external_port, internal_port, mount_manager=None):
     try:
         public_audio_root = config.get('public_audio_path') or os.getcwd()
         closed_audio_root = config.get('closed_audio_path') or os.getcwd()
+        if mount_manager:
+            public_audio_root = mount_manager.mount_for_nginx('public', public_audio_root)
+            closed_audio_root = mount_manager.mount_for_nginx('closed', closed_audio_root)
         nginx_config = Template(nginx_config_template).safe_substitute(
             server_ip=server_ip,
             external_port=external_port,
@@ -241,6 +332,7 @@ class ServerManager:
         self.service_status = "stopped"
         self.last_exit_reason = None
         self.internal_port = None
+        self.mount_manager = NetworkDriveMountManager()
 
     def _bootstrap_app(self):
         app, message = create_app()
@@ -284,6 +376,7 @@ class ServerManager:
         self.last_exit_reason = None
         self.stop_event = threading.Event()
         self.threads = {}
+        self.mount_manager = NetworkDriveMountManager()
         external_port = int(external_port)
         internal_port = _find_internal_port(external_port)
         self.internal_port = internal_port
@@ -301,7 +394,7 @@ class ServerManager:
             print(f"[startup] Waitress health-check: {time.perf_counter() - stage_time:.2f}s")
 
             stage_time = time.perf_counter()
-            res, msg = generate_nginx_config(server_ip, external_port, internal_port)
+            res, msg = generate_nginx_config(server_ip, external_port, internal_port, self.mount_manager)
             if res:
                 raise RuntimeError(msg)
             result = start_nginx()
@@ -343,6 +436,7 @@ class ServerManager:
         self.stop_event.set()
         stop_nginx(self.nginx_process)
         self.nginx_process = None
+        self.mount_manager.unmount_all()
         if self.waitress_server:
             try:
                 self.waitress_server.close()
