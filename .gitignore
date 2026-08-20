@@ -1,4 +1,6 @@
 /logs/
+/temp/
+__pycache__/
 /app.log
 /CWAA Server.spec
 /nginx_dynamic.conf

@@ -39,9 +39,12 @@ WAVEFORM_SAMPLE_RATE = 8000
 MIN_AUDIO_YEAR = 2020
 ARCHIVE_MP3_SAMPLE_RATE = '32000'
 ARCHIVE_MP3_BITRATE = '128k'
-FEMIDA_AUDIO_FILTER = (
+FEMIDA_CHANNEL_FILTER = (
+    'highpass=f=80,'
+    'speechnorm=e=16:c=4:r=0.01:f=0.01:p=0.95'
+)
+FEMIDA_MIX_FILTER = (
     'amix=inputs={inputs}:duration=longest:dropout_transition=2:normalize=0,'
-    'dynaudnorm=f=250:g=15:p=0.95:m=20,'
     'alimiter=limit=0.95'
 )
 
@@ -807,47 +810,51 @@ def convert_case():
         if not groups:
             return jsonify({'error': 'no valid .wav files'}), 400
         # Конкатенация каналов
+        job_dir = tempfile.mkdtemp(prefix='cwaa_femida_', dir=TEMP_MP3_FOLDER)
         intermediate_files = []
-        for idx, group in enumerate(groups):
-            cmd = ['ffmpeg', '-y']
-            for f in group:
-                cmd += ['-i', f]
-            concat_filter = ''.join([f'[{i}:0]' for i in range(len(group))])
-            concat_filter += f'concat=n={len(group)}:v=0:a=1[out]'
-            out_tmp = os.path.join(TEMP_MP3_FOLDER, f"intermediate_{idx}.wav")
-            cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'pcm_s16le', out_tmp]
-            result = _run_ffmpeg(cmd)
+        try:
+            for idx, group in enumerate(groups):
+                cmd = ['ffmpeg', '-y']
+                for f in group:
+                    cmd += ['-i', f]
+                concat_filter = ''.join([f'[{i}:0]' for i in range(len(group))])
+                concat_filter += f'concat=n={len(group)}:v=0:a=1[channel];[channel]{FEMIDA_CHANNEL_FILTER}[out]'
+                out_tmp = os.path.join(job_dir, f"intermediate_{idx}.wav")
+                cmd += ['-filter_complex', concat_filter, '-map', '[out]', '-acodec', 'pcm_s16le', out_tmp]
+                result = _run_ffmpeg(cmd)
+                if result.returncode != 0:
+                    return jsonify({'error': f'ffmpeg concat error: {result.stderr[180:]}'}), 500
+                intermediate_files.append(out_tmp)
+            # Смешивание всех каналов
+            mix_cmd = ['ffmpeg', '-y']
+            for f in intermediate_files:
+                mix_cmd += ['-i', f]
+            final_name = f"femida_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.mp3"
+            final_tmp = os.path.join(TEMP_MP3_FOLDER, final_name)
+            mix_cmd += [
+                '-filter_complex',
+                FEMIDA_MIX_FILTER.format(inputs=len(intermediate_files)),
+                *_archive_mp3_encode_args(),
+                final_tmp
+            ]
+            result = _run_ffmpeg(mix_cmd)
             if result.returncode != 0:
-                return jsonify({'error': f'ffmpeg concat error: {result.stderr[180:]}'}), 500
-            intermediate_files.append(out_tmp)
-        # Смешивание всех каналов
-        mix_cmd = ['ffmpeg', '-y']
-        for f in intermediate_files:
-            mix_cmd += ['-i', f]
-        final_name = f"femida_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp3"
-        final_tmp = os.path.join(TEMP_MP3_FOLDER, final_name)
-        mix_cmd += [
-            '-filter_complex',
-            FEMIDA_AUDIO_FILTER.format(inputs=len(intermediate_files)),
-            *_archive_mp3_encode_args(),
-            final_tmp
-        ]
-        result = _run_ffmpeg(mix_cmd)
-        if result.returncode != 0:
-            return jsonify({'error': f'ffmpeg mix error: {result.stderr[:200]}'}), 500
-        # Извлекаем дату из названия кейса (например: from 18-04-2025)
-        base_name = os.path.basename(case_path)
-        dt_match = re.search(r'from\s+(\d{2})-(\d{2})-(\d{4})', base_name)
-        if dt_match:
-            dt = datetime.strptime('-'.join(dt_match.groups()), "%d-%m-%Y")
-        else:
-            dt = datetime.now()
+                return jsonify({'error': f'ffmpeg mix error: {result.stderr[:200]}'}), 500
+            # Извлекаем дату из названия кейса (например: from 18-04-2025)
+            base_name = os.path.basename(case_path)
+            dt_match = re.search(r'from\s+(\d{2})-(\d{2})-(\d{4})', base_name)
+            if dt_match:
+                dt = datetime.strptime('-'.join(dt_match.groups()), "%d-%m-%Y")
+            else:
+                dt = datetime.now()
 
-        return jsonify(_build_temp_asset_response(
-            final_tmp,
-            source_name=base_name,
-            date=dt.strftime("%Y-%m-%d") if _is_valid_audio_date(dt) else None
-        ))
+            return jsonify(_build_temp_asset_response(
+                final_tmp,
+                source_name=base_name,
+                date=dt.strftime("%Y-%m-%d") if _is_valid_audio_date(dt) else None
+            ))
+        finally:
+            shutil.rmtree(job_dir, ignore_errors=True)
 
 
 @api.route('/temp_upload_audio', methods=['POST'])
@@ -990,8 +997,10 @@ def download_rendered_edit():
 
 @api.route('/temp_audio/<filename>')
 def serve_temp_audio(filename):
-    path = os.path.join(TEMP_MP3_FOLDER, filename)
-    if os.path.exists(path):
+    path = os.path.abspath(os.path.join(TEMP_MP3_FOLDER, filename))
+    if not _relative_path_inside(path, os.path.abspath(TEMP_MP3_FOLDER)):
+        return "Файл вне разрешенной директории", 403
+    if os.path.isfile(path):
         return _x_accel_redirect('/protected_temp_mp3/', TEMP_MP3_FOLDER, path, mimetype='audio/mpeg')
     return "Файл не найден", 404
 

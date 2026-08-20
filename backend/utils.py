@@ -5,16 +5,15 @@ from backend.db import Session
 from backend.models import AudioRecord
 import re
 from datetime import datetime
-import tempfile
 import time
 
 COURTROOMS_FILE = 'courtrooms.txt'
-TEMP_MP3_FOLDER = os.path.join(tempfile.gettempdir(), "femida_mp3")
+TEMP_MP3_FOLDER = os.path.abspath(os.path.join(os.getcwd(), "temp", "femida_mp3"))
 os.makedirs(TEMP_MP3_FOLDER, exist_ok=True)
 FILE_LIFETIME_SECONDS = 3600  # 1 час
 CHECK_INTERVAL_SECONDS = 300  # каждые 5 минут
 MIN_AUDIO_YEAR = 2020
-version = "2.3"
+version = "2.5"
 
 
 def cleanup_old_mp3_files(stop_event=None):

@@ -458,6 +458,117 @@ class ServerManager:
         return self.threads.get(key)
 
 
+class MigrationShareWindow(QMainWindow):
+    session_ready = Signal(object, str)
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Передача архива в SDP Hub")
+        self.setMinimumWidth(620)
+        self.session_payload = None
+
+        self.status_label = QLabel(
+            "Создайте временный read-only snapshot. Доступ действует 24 часа и защищён отдельным паролем."
+        )
+        self.status_label.setWordWrap(True)
+        self.link_input = QLineEdit()
+        self.link_input.setReadOnly(True)
+        self.link_input.setPlaceholderText("Ссылка появится после подготовки snapshot")
+        self.password_input = QLineEdit()
+        self.password_input.setReadOnly(True)
+        self.password_input.setPlaceholderText("Пароль показывается только в этом окне")
+        self.details_label = QLabel()
+        self.details_label.setWordWrap(True)
+
+        self.create_button = QPushButton("Создать новую ссылку")
+        self.create_button.clicked.connect(self.create_session)
+        self.copy_link_button = QPushButton("Копировать ссылку")
+        self.copy_link_button.clicked.connect(lambda: self.copy_value(self.link_input.text()))
+        self.copy_password_button = QPushButton("Копировать пароль")
+        self.copy_password_button.clicked.connect(lambda: self.copy_value(self.password_input.text()))
+        self.revoke_button = QPushButton("Отозвать доступ")
+        self.revoke_button.clicked.connect(self.revoke_session)
+        self.copy_link_button.setEnabled(False)
+        self.copy_password_button.setEnabled(False)
+        self.revoke_button.setEnabled(False)
+
+        form = QFormLayout()
+        form.addRow("Ссылка для SDP Hub:", self.link_input)
+        form.addRow("Пароль:", self.password_input)
+        copy_buttons = QHBoxLayout()
+        copy_buttons.addWidget(self.copy_link_button)
+        copy_buttons.addWidget(self.copy_password_button)
+        actions = QHBoxLayout()
+        actions.addWidget(self.create_button)
+        actions.addWidget(self.revoke_button)
+        layout = QVBoxLayout()
+        layout.addWidget(self.status_label)
+        layout.addLayout(form)
+        layout.addLayout(copy_buttons)
+        layout.addWidget(self.details_label)
+        layout.addLayout(actions)
+        container = QWidget()
+        container.setLayout(layout)
+        self.setCentralWidget(container)
+        self.session_ready.connect(self.on_session_ready)
+
+    def create_session(self):
+        self.create_button.setEnabled(False)
+        self.status_label.setText("Создаётся консистентный snapshot и инвентаризация файлов CWAA…")
+
+        def worker():
+            try:
+                from backend.migration_api import create_migration_session
+                payload = create_migration_session()
+                self.session_ready.emit(payload, "")
+            except Exception as exc:
+                self.session_ready.emit({}, str(exc))
+
+        threading.Thread(target=worker, daemon=True, name="migration_export_prepare").start()
+
+    def on_session_ready(self, payload, error):
+        self.create_button.setEnabled(True)
+        if error:
+            self.status_label.setText("Не удалось подготовить передачу.")
+            QMessageBox.critical(self, "Ошибка подготовки", error)
+            return
+        self.session_payload = dict(payload or {})
+        base_url = f"http://{config['server_ip']}:{config['server_port']}"
+        self.link_input.setText(base_url + self.session_payload.get("path", ""))
+        self.password_input.setText(self.session_payload.get("password", ""))
+        self.details_label.setText(
+            "Подготовлено записей: {records}; объём: {size:.2f} ГБ; доступ до {expires}. "
+            "Передайте ссылку и пароль администратору SDP Hub раздельно.".format(
+                records=int(self.session_payload.get("records") or 0),
+                size=int(self.session_payload.get("bytes") or 0) / (1024 ** 3),
+                expires=self.session_payload.get("expires_at") or "—",
+            )
+        )
+        self.status_label.setText("Read-only доступ готов. Новая ссылка автоматически отзовёт предыдущую.")
+        self.copy_link_button.setEnabled(True)
+        self.copy_password_button.setEnabled(True)
+        self.revoke_button.setEnabled(True)
+
+    def copy_value(self, value):
+        if value:
+            QApplication.clipboard().setText(value)
+
+    def revoke_session(self):
+        from backend.migration_api import revoke_all_migration_sessions
+        revoke_all_migration_sessions()
+        self.mark_revoked()
+
+    def mark_revoked(self):
+        self.session_payload = None
+        self.link_input.clear()
+        self.password_input.clear()
+        self.details_label.clear()
+        self.status_label.setText("Доступ отозван. При необходимости создайте новую ссылку.")
+        self.copy_link_button.setEnabled(False)
+        self.copy_password_button.setEnabled(False)
+        self.revoke_button.setEnabled(False)
+
+
 class MainWindow(QMainWindow):
     nginx_error_signal = Signal(str)
     service_start_finished = Signal(bool, str)
@@ -469,6 +580,7 @@ class MainWindow(QMainWindow):
         self.backup_window = None
         self.path_migration_window = None
         self.duplicate_resolver_window = None
+        self.migration_share_window = None
         self.monitor_thread = None
         self.orchestrator_thread = None
         self.cleanup_thread = None
@@ -548,6 +660,10 @@ class MainWindow(QMainWindow):
         self.path_migration_button.clicked.connect(self.open_path_migration)
         self.duplicate_resolver_button = QPushButton("🧩 Разрешение дублей записей")
         self.duplicate_resolver_button.clicked.connect(self.open_duplicate_resolver)
+        self.migration_share_button = QPushButton("🔗 Передача архива в SDP Hub")
+        self.migration_share_button.setEnabled(False)
+        self.migration_share_button.setToolTip("Сначала запустите сервер CWAA")
+        self.migration_share_button.clicked.connect(self.open_migration_share)
 
         # Основной layout
         layout = QVBoxLayout()
@@ -563,6 +679,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.courtroom_button)
         layout.addWidget(self.path_migration_button)
         layout.addWidget(self.duplicate_resolver_button)
+        layout.addWidget(self.migration_share_button)
         layout.addWidget(self.save_button)
         container = QWidget()
         container.setLayout(layout)
@@ -692,6 +809,16 @@ class MainWindow(QMainWindow):
             self.duplicate_resolver_window = DuplicateResolverWindow()
         self.duplicate_resolver_window.show()
 
+    def open_migration_share(self):
+        if self.manager.service_status != "running":
+            QMessageBox.warning(self, "Передача недоступна", "Сначала запустите сервер CWAA.")
+            return
+        if not self.migration_share_window:
+            self.migration_share_window = MigrationShareWindow()
+        self.migration_share_window.show()
+        self.migration_share_window.raise_()
+        self.migration_share_window.activateWindow()
+
     def start_server(self):
         try:
             if self.manager.service_status in ("starting", "running"):
@@ -748,6 +875,10 @@ class MainWindow(QMainWindow):
         self.set_running_state()
 
     def on_service_stop_finished(self):
+        from backend.migration_api import revoke_all_migration_sessions
+        revoke_all_migration_sessions()
+        if self.migration_share_window:
+            self.migration_share_window.mark_revoked()
         self.orchestrator_thread = None
         self.cleanup_thread = None
         self.monitor_thread = None
@@ -777,6 +908,7 @@ class MainWindow(QMainWindow):
         self.courtroom_button.setEnabled(False)
         self.path_migration_button.setEnabled(False)
         self.duplicate_resolver_button.setEnabled(False)
+        self.migration_share_button.setEnabled(False)
 
     def set_running_state(self):
         self.update_status("Запущен")
@@ -803,6 +935,8 @@ class MainWindow(QMainWindow):
         self.courtroom_button.setEnabled(False)
         self.path_migration_button.setEnabled(False)
         self.duplicate_resolver_button.setEnabled(False)
+        self.migration_share_button.setEnabled(True)
+        self.migration_share_button.setToolTip("Создать одноразовую ссылку и пароль для SDP Hub")
 
     def set_stopping_state(self):
         self.update_status("Останавливается...")
@@ -812,6 +946,7 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.start_action.setEnabled(False)
         self.stop_action.setEnabled(False)
+        self.migration_share_button.setEnabled(False)
 
     def set_stopped_state(self):
         self.update_status("Остановлен")
@@ -838,6 +973,8 @@ class MainWindow(QMainWindow):
         self.courtroom_button.setEnabled(True)
         self.path_migration_button.setEnabled(True)
         self.duplicate_resolver_button.setEnabled(True)
+        self.migration_share_button.setEnabled(False)
+        self.migration_share_button.setToolTip("Сначала запустите сервер CWAA")
 
     def monitor_services(self, signal_error, stop_event):
         """Функция для отслеживания процессов nginx и flask"""
@@ -881,6 +1018,10 @@ class MainWindow(QMainWindow):
             self.update_status("Останавливается после ошибки...")
             self.update_tray_icon("yellow")
             self.manager.stop()
+        from backend.migration_api import revoke_all_migration_sessions
+        revoke_all_migration_sessions()
+        if self.migration_share_window:
+            self.migration_share_window.mark_revoked()
         self.update_status(message)
         self.update_tray_icon("red")
         self.start_button.setText("🚀 Запустить сервер")
@@ -904,6 +1045,7 @@ class MainWindow(QMainWindow):
         self.courtroom_button.setEnabled(True)
         self.path_migration_button.setEnabled(True)
         self.duplicate_resolver_button.setEnabled(True)
+        self.migration_share_button.setEnabled(False)
 
     def save_config(self):
         global config

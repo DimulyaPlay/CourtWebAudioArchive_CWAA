@@ -33,8 +33,10 @@ def create_app():
 
         from .views import views
         from .api import api
+        from .migration_api import migration_api
         app.register_blueprint(views, url_prefix='/')
         app.register_blueprint(api, url_prefix='/api/')
+        app.register_blueprint(migration_api, url_prefix='/api/migration/v1')
 
         @app.route('/healthz')
         def healthz():
