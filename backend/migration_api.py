@@ -71,11 +71,14 @@ def _display_path(value, variants):
     return Path(str(value or "audio")).name or "audio"
 
 
-def _storage_variants(value):
-    if not value:
-        return []
-    supplied = Path(str(value)).expanduser()
-    variants = []
+def _inventory_key(value):
+    return os.path.normcase(os.path.normpath(str(value or "")))
+
+
+def _scan_storage_inventory(progress=None):
+    """Read directory metadata once; never open or hash archive contents."""
+    inventories = {}
+    total_files = 0
     for access_level, root_value in (
         ("open", config.get("public_audio_path")),
         ("restricted", config.get("closed_audio_path")),
@@ -83,24 +86,73 @@ def _storage_variants(value):
         if not root_value:
             continue
         root = Path(root_value).expanduser().resolve()
+        inventory = {"root": str(root), "by_relative": {}, "by_absolute": {}, "files": []}
+        inventories[access_level] = inventory
+        if not root.is_dir():
+            raise MigrationExportError(f"Корень CWAA недоступен для текущего пользователя: {root}")
+        if progress:
+            progress(f"Инвентаризация {access_level}: {root.name or root}")
+        pending = [root]
+        scanned_directories = 0
+        while pending:
+            current = pending.pop()
+            try:
+                with os.scandir(current) as scanner:
+                    entries = list(scanner)
+            except OSError as exc:
+                raise MigrationExportError(f"Не удалось прочитать каталог CWAA: {current}") from exc
+            scanned_directories += 1
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(Path(entry.path))
+                        continue
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    suffix = Path(entry.name).suffix.lower()
+                    if suffix not in {".mp3", ".txt"}:
+                        continue
+                    stat = entry.stat(follow_symlinks=False)
+                except OSError as exc:
+                    raise MigrationExportError(f"Не удалось прочитать файл CWAA: {entry.path}") from exc
+                path = Path(os.path.abspath(entry.path))
+                relative = Path(os.path.relpath(path, root)).as_posix()
+                variant = {
+                    "access_level": access_level,
+                    "path": str(path),
+                    "root": str(root),
+                    "relative": relative,
+                    "size_bytes": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                    "filename": path.name,
+                }
+                inventory["files"].append(variant)
+                inventory["by_relative"][_inventory_key(relative)] = variant
+                inventory["by_absolute"][_inventory_key(path)] = variant
+                total_files += 1
+            if progress and scanned_directories % 25 == 0:
+                progress(f"Инвентаризация каталогов CWAA: найдено файлов {total_files}")
+    if progress:
+        progress(f"Метаинвентарь CWAA готов: файлов {total_files}; содержимое не читалось")
+    return inventories
+
+
+def _storage_variants(value, inventories):
+    if not value:
+        return []
+    supplied = Path(str(value)).expanduser()
+    variants = []
+    for access_level, inventory in inventories.items():
+        root = Path(inventory["root"])
         if supplied.is_absolute():
-            candidate = supplied.resolve()
+            variant = inventory["by_absolute"].get(_inventory_key(os.path.abspath(supplied)))
         else:
             relative = _safe_relative(value)
             if not relative:
                 continue
-            candidate = (root / Path(*PurePosixPath(relative).parts)).resolve()
-        if not _inside(candidate, root) or not candidate.is_file():
-            continue
-        stat = candidate.stat()
-        variants.append({
-            "access_level": access_level,
-            "path": str(candidate),
-            "root": str(root),
-            "size_bytes": stat.st_size,
-            "mtime_ns": stat.st_mtime_ns,
-            "filename": candidate.name,
-        })
+            variant = inventory["by_relative"].get(_inventory_key(relative))
+        if variant and _inside(variant["path"], root):
+            variants.append(dict(variant))
     return variants
 
 
@@ -149,18 +201,22 @@ def _read_snapshot_rows(snapshot_path):
         connection.close()
 
 
-def _public_variant(variant):
-    return {
+def _public_variant(variant, *, audio=False):
+    payload = {
         "access_level": variant["access_level"],
         "size_bytes": variant["size_bytes"],
         "mtime_ns": variant["mtime_ns"],
         "filename": variant["filename"],
     }
+    if audio:
+        # Exactly the URL used by the regular CWAA archive player.
+        payload["audio_url"] = f"/api/audio/{variant['relative']}"
+    return payload
 
 
-def _entry_from_row(row):
-    audio_variants = _storage_variants(row.get("file_path"))
-    text_variants = _storage_variants(row.get("recognized_text_path"))
+def _entry_from_row(row, inventories):
+    audio_variants = _storage_variants(row.get("file_path"), inventories)
+    text_variants = _storage_variants(row.get("recognized_text_path"), inventories)
     return {
         "id": int(row["id"]),
         "user_folder": str(row.get("user_folder") or ""),
@@ -179,34 +235,27 @@ def _entry_from_row(row):
     }
 
 
-def _closed_unindexed_entries(referenced_paths):
-    root_value = config.get("closed_audio_path")
-    if not root_value:
+def _closed_unindexed_entries(referenced_paths, inventories):
+    inventory = inventories.get("restricted")
+    if not inventory:
         return []
-    root = Path(root_value).expanduser().resolve()
-    if not root.is_dir():
-        return []
+    root = Path(inventory["root"])
     result = []
-    for path in sorted(item for item in root.rglob("*") if item.is_file() and item.suffix.lower() == ".mp3"):
-        resolved = path.resolve()
+    candidates = sorted(
+        (item for item in inventory["files"] if Path(item["filename"]).suffix.lower() == ".mp3"),
+        key=lambda item: item["relative"].casefold(),
+    )
+    for variant in candidates:
+        resolved = Path(variant["path"])
         if os.path.normcase(str(resolved)) in referenced_paths:
             continue
-        relative = resolved.relative_to(root)
+        relative = PurePosixPath(variant["relative"])
         try:
-            audio_at = datetime.strptime(path.stem, "%Y-%m-%d_%H-%M").isoformat(sep=" ")
+            audio_at = datetime.strptime(resolved.stem, "%Y-%m-%d_%H-%M").isoformat(sep=" ")
         except ValueError:
             audio_at = ""
-        stat = resolved.stat()
-        variant = {
-            "access_level": "restricted",
-            "path": str(resolved),
-            "root": str(root),
-            "size_bytes": stat.st_size,
-            "mtime_ns": stat.st_mtime_ns,
-            "filename": resolved.name,
-        }
         text_path = resolved.with_suffix(".txt")
-        text_variants = _storage_variants(str(text_path)) if text_path.is_file() else []
+        text_variants = _storage_variants(str(text_path), inventories)
         legacy_id = -int(hashlib.sha256(relative.as_posix().encode("utf-8")).hexdigest()[:12], 16)
         result.append({
             "id": legacy_id,
@@ -233,7 +282,7 @@ def _public_entry(entry):
         if key not in {"audio_variants", "text_variants"}
     }
     payload.update({
-        "audio": [_public_variant(item) for item in entry["audio_variants"]],
+        "audio": [_public_variant(item, audio=True) for item in entry["audio_variants"]],
         "text": [_public_variant(item) for item in entry["text_variants"]],
         "text_available": bool(entry["text_variants"] or entry["fts_available"]),
     })
@@ -262,20 +311,26 @@ def _cleanup_expired_locked():
         shutil.rmtree(session["root"], ignore_errors=True)
 
 
-def create_migration_session(hours=SESSION_LIFETIME_HOURS):
+def create_migration_session(hours=SESSION_LIFETIME_HOURS, progress=None):
     """Create one immutable export session. The clear password is returned once."""
     session_id = secrets.token_urlsafe(24)
     password = secrets.token_urlsafe(12)
     root = _SESSION_ROOT / session_id
     snapshot = root / "audio_archive.db"
     try:
+        if progress:
+            progress("Создаётся консистентный snapshot базы CWAA…")
         _snapshot_database(snapshot)
-        entries = [_entry_from_row(row) for row in _read_snapshot_rows(snapshot)]
+        rows = list(_read_snapshot_rows(snapshot))
+        if progress:
+            progress(f"Snapshot базы готов: записей {len(rows)}; читается метаинвентарь каталогов…")
+        inventories = _scan_storage_inventory(progress=progress)
+        entries = [_entry_from_row(row, inventories) for row in rows]
         referenced = {
             os.path.normcase(item["path"])
             for entry in entries for item in entry["audio_variants"]
         }
-        entries.extend(_closed_unindexed_entries(referenced))
+        entries.extend(_closed_unindexed_entries(referenced, inventories))
         entries.sort(key=lambda item: (int(item["id"] < 0), item["id"]))
         folders = {}
         for entry in entries:
@@ -376,13 +431,16 @@ def migration_session_info(session_id):
     return _no_store(jsonify({
         "schema": MIGRATION_SCHEMA,
         "source": "CWAA",
-        "source_version": "2.4",
+        "source_version": "2.5.1",
         "snapshot_id": session["fingerprint"],
         "created_at": _iso(session["created_at"]),
         "expires_at": _iso(session["expires_at"]),
         "records": len(session["entries"]),
         "folders": len(session["folders"]),
-        "capabilities": ["paged_manifest", "range_download", "transcripts", "unindexed_closed"],
+        "capabilities": [
+            "paged_manifest", "metadata_only_manifest", "archive_audio_url", "range_download",
+            "transcripts", "unindexed_closed"
+        ],
     }))
 
 

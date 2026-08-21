@@ -460,6 +460,7 @@ class ServerManager:
 
 class MigrationShareWindow(QMainWindow):
     session_ready = Signal(object, str)
+    session_progress = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -511,6 +512,7 @@ class MigrationShareWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
         self.session_ready.connect(self.on_session_ready)
+        self.session_progress.connect(self.status_label.setText)
 
     def create_session(self):
         self.create_button.setEnabled(False)
@@ -519,7 +521,7 @@ class MigrationShareWindow(QMainWindow):
         def worker():
             try:
                 from backend.migration_api import create_migration_session
-                payload = create_migration_session()
+                payload = create_migration_session(progress=self.session_progress.emit)
                 self.session_ready.emit(payload, "")
             except Exception as exc:
                 self.session_ready.emit({}, str(exc))
