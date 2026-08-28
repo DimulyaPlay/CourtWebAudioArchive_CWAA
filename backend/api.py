@@ -40,12 +40,18 @@ MIN_AUDIO_YEAR = 2020
 ARCHIVE_MP3_SAMPLE_RATE = '32000'
 ARCHIVE_MP3_BITRATE = '128k'
 FEMIDA_CHANNEL_FILTER = (
-    'highpass=f=80,'
-    'speechnorm=e=16:c=4:r=0.01:f=0.01:p=0.95'
+    'highpass=f=80,lowpass=f=7500,'
+    'afftdn=nr=10:nf=-45:tn=1:gs=5'
 )
+FEMIDA_HUM_FREQUENCIES = tuple(range(50, 1001, 50)) + tuple(range(1050, 2951, 100))
+FEMIDA_OUTPUT_FILTER = ','.join((
+    *(f'bandreject=f={frequency}:t=h:w=6' for frequency in FEMIDA_HUM_FREQUENCIES),
+    'loudnorm=I=-20:TP=-2:LRA=11',
+    'alimiter=limit=0.95',
+))
 FEMIDA_MIX_FILTER = (
-    'amix=inputs={inputs}:duration=longest:dropout_transition=2:normalize=0,'
-    'alimiter=limit=0.95'
+    'amix=inputs={inputs}:duration=longest:dropout_transition=2:normalize=1,'
+    + FEMIDA_OUTPUT_FILTER
 )
 
 
