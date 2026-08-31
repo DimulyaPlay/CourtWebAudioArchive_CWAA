@@ -56,7 +56,7 @@
 
       <div class="mb-2">
         <label class="form-label" for="courtroom">Зал проведения заседания:</label>
-        <select class="form-select" id="courtroom" name="courtroom" required>
+        <select class="form-select" id="courtroom" name="courtroom" {% if courtrooms %} required{% endif %}>
           <option value=""></option>
           {% for room in courtrooms %}
           <option value="{{ room }}">{{ room }}</option>
@@ -495,8 +495,6 @@
         const audioDateInput = $('#audio_date');
         const selectedDate = audioDateInput.val();
         const today = getTodayIsoDate();
-
-        audioDateInput.attr('max', today);
 
         if (!selectedDate) {
           audioDateInput[0].setCustomValidity('');
@@ -1434,7 +1432,7 @@
 
       window.CWAA_RECOGNITION_ENABLED = {{ 'true' if recognize_text_enabled else 'false' }};
       $('#audio_date').attr('max', getTodayIsoDate());
-      $('#audio_date').on('change input', validateAudioDate);
+      $('#audio_date').on('change', validateAudioDate);
 
       updateVRQueueInfo();
       renderSourceList();
@@ -2531,4 +2529,3 @@
   </style>
 </body>
 
-</html>
