@@ -627,6 +627,11 @@ class MainWindow(QMainWindow):
         self.recognize_text_default.setToolTip(
             'Если распознавание включено, чекбокс "Перевести аудио в текст" на странице архивации будет отмечен заранее.'
         )
+        self.read_only_mode = QCheckBox()
+        self.read_only_mode.setChecked(config.get('read_only_mode', 'false') == 'true')
+        self.read_only_mode.setToolTip(
+            'Отключает приём новых записей в аудиоархив. Импорт источников, аудиоредактор, скачивание и просмотр архива остаются доступны.'
+        )
         self.create_year_subfolders = QCheckBox()
         self.create_year_subfolders.setChecked(config['create_year_subfolders']=='true')
         form_layout.addRow("Выберите IP для размещения сервера:", self.server_ip_combo)
@@ -634,6 +639,7 @@ class MainWindow(QMainWindow):
         form_layout.addRow('Создавать подпапки по годам в папках судей', self.create_year_subfolders)
         form_layout.addRow('Распознавать записи в текст', self.recognize_text_enabled)
         form_layout.addRow('Распознавать записи по умолчанию', self.recognize_text_default)
+        form_layout.addRow('Режим «только чтение» (не принимать новые записи)', self.read_only_mode)
         form_layout.addRow("Путь хранения открытых аудиопротоколов:", self.public_audio_path_input)
         form_layout.addRow("Путь хранения закрытых аудиопротоколов:", self.closed_audio_path_input)
         form_layout.addRow('Путь для распознавания аудиопротоколов:', self.recognize_text_from_audio_path_input)
@@ -789,6 +795,7 @@ class MainWindow(QMainWindow):
         self.recognize_text_from_audio_path_input.setText(restored_config.get('recognize_text_from_audio_path', ''))
         self.recognize_text_enabled.setChecked(str(restored_config.get('recognize_text_enabled', 'true')) == 'true')
         self.recognize_text_default.setChecked(str(restored_config.get('recognize_text_default', 'false')) == 'true')
+        self.read_only_mode.setChecked(str(restored_config.get('read_only_mode', 'false')) == 'true')
         self.create_year_subfolders.setChecked(str(restored_config.get('create_year_subfolders', 'false')) == 'true')
         self.update_app_link()
         if self.backup_window:
@@ -903,6 +910,7 @@ class MainWindow(QMainWindow):
         self.create_year_subfolders.setEnabled(False)
         self.recognize_text_enabled.setEnabled(False)
         self.recognize_text_default.setEnabled(False)
+        self.read_only_mode.setEnabled(False)
         self.recognize_text_from_audio_path_input.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.backup_button.setEnabled(False)
@@ -930,6 +938,7 @@ class MainWindow(QMainWindow):
         self.create_year_subfolders.setEnabled(False)
         self.recognize_text_enabled.setEnabled(False)
         self.recognize_text_default.setEnabled(False)
+        self.read_only_mode.setEnabled(False)
         self.recognize_text_from_audio_path_input.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.backup_button.setEnabled(False)
@@ -968,6 +977,7 @@ class MainWindow(QMainWindow):
         self.create_year_subfolders.setEnabled(True)
         self.recognize_text_enabled.setEnabled(True)
         self.recognize_text_default.setEnabled(True)
+        self.read_only_mode.setEnabled(True)
         self.recognize_text_from_audio_path_input.setEnabled(True)
         self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
         self.backup_button.setEnabled(True)
@@ -1041,6 +1051,7 @@ class MainWindow(QMainWindow):
         self.create_year_subfolders.setEnabled(True)
         self.recognize_text_enabled.setEnabled(True)
         self.recognize_text_default.setEnabled(True)
+        self.read_only_mode.setEnabled(True)
         self.recognize_text_from_audio_path_input.setEnabled(True)
         self.scan_button.setEnabled("-restore_base_from_dir" in sys.argv)
         self.backup_button.setEnabled(True)
@@ -1071,6 +1082,7 @@ class MainWindow(QMainWindow):
         config['recognize_text_from_audio_path'] = self.recognize_text_from_audio_path_input.text().replace('"', '')
         config['recognize_text_enabled'] = "true" if self.recognize_text_enabled.isChecked() else 'false'
         config['recognize_text_default'] = "true" if self.recognize_text_default.isChecked() else 'false'
+        config['read_only_mode'] = "true" if self.read_only_mode.isChecked() else 'false'
         config['create_year_subfolders'] = "true" if self.create_year_subfolders.isChecked() else 'false'
         save_config(config)
         self.update_app_link()

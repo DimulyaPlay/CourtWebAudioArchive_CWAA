@@ -69,6 +69,7 @@ def read_create_config():
         "recognize_text_from_audio_path": '',
         'recognize_text_enabled': 'true',
         'recognize_text_default': 'false',
+        'read_only_mode': 'false',
         'create_year_subfolders': 'false'
     }
     config = default_configuration.copy()

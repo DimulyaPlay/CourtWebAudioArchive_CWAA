@@ -20,6 +20,13 @@
     <h4 class="mb-2">{{ title }}</h4>
 
     <form action="/" enctype="multipart/form-data" method="POST">
+      {% if read_only_mode %}
+      <div class="alert alert-warning" role="alert">
+        <i class="bi bi-lock-fill me-2"></i>
+        <strong>Сохранение новых записей отключено администратором.</strong>
+        Аудиоредактор, импорт источников и скачивание результата доступны без сохранения в архив.
+      </div>
+      {% else %}
       <div class="mb-2">
         <label class="form-label" for="user_folder">Выберите судью:</label>
         <select class="form-select" id="user_folder" name="user_folder" required>
@@ -78,6 +85,7 @@
         <input class="form-check-input" id="closed_session" name="closed_session" type="checkbox">
         <label class="form-check-label" for="closed_session">Закрытое судебное заседание</label>
       </div>
+      {% endif %}
 
       <div class="mb-2">
         <label class="form-label d-block">Прикрепить аудиоисточники:</label>
@@ -133,9 +141,11 @@
       <div class="mt-2">
         <input id="final_temp_id" name="final_temp_id" type="hidden">
         <div class="d-flex gap-2 flex-wrap">
+          {% if not read_only_mode %}
           <button class="btn btn-primary" type="submit">
             <i class="bi bi-cloud-upload"></i> Подтвердить и сохранить на сервере
           </button>
+          {% endif %}
           <button class="btn btn-secondary" id="download-rendered-audio"
             title="Скачать результат работы в редакторе аудифайлов (применить редактирование источников и склеить в один файл)"
             type="button">
@@ -320,7 +330,7 @@
         <div class="modal-body pt-3">
           <p class="mb-3">
             Теперь можно собирать аудиопротокол из нескольких аудиозаписей и быстро корректировать каждый файл
-            перед сохранением.
+            перед сохранением или скачиванием.
           </p>
           <div class="welcome-tip">
             <div class="welcome-tip-title">1. Добавьте источники</div>
@@ -340,14 +350,18 @@
             <div class="welcome-tip-title">3. Откройте редактор</div>
             <div class="text-muted small">
               У каждого аудио есть редактор. В нем можно прослушать запись, обрезать лишнее по краям или вырезать
-              ненужный фрагмент из середины записи. Когда запись обрезана как надо просто закройте редактор, изменения будут учтены при сохранении.
+              ненужный фрагмент из середины записи. Когда запись обрезана как надо, просто закройте редактор — изменения будут учтены в результате.
             </div>
           </div>
           <div class="welcome-tip">
-            <div class="welcome-tip-title">4. Сохраните результат</div>
+            <div class="welcome-tip-title">4. {{ 'Скачайте результат' if read_only_mode else 'Сохраните результат' }}</div>
             <div class="text-muted small">
+              {% if read_only_mode %}
+              Скачайте отредактированный файл: сохранение новых записей в архив отключено администратором.
+              {% else %}
               Сохраните аудио на сервере и получите ссылку или скачайте отредактированный файл без сохранения,
               если нужно просто отредактировать запись.
+              {% endif %}
             </div>
           </div>
         </div>
@@ -374,6 +388,7 @@
       const dropOverlay = $('#drop-overlay');
       const audioInput = $('#audio_file');
       const form = $('form');
+      const readOnlyMode = {{ 'true' if read_only_mode else 'false' }};
       const sources = [];
       const audioEditorModal = new bootstrap.Modal(document.getElementById('audioEditorModal'));
       const editorAudio = $('#editor-audio')[0];
@@ -1319,7 +1334,7 @@
             cut_start: source.cut_start,
             cut_end: source.cut_end
           })),
-          case_number: $('#case_number').val().trim(),
+          case_number: ($('#case_number').val() || '').trim(),
           audio_date: $('#audio_date').val(),
           audio_time: $('#audio_time').val()
         };
@@ -1358,7 +1373,7 @@
       async function downloadRenderedAudio() {
         $('#upload-alert-container').empty();
 
-        if (!validateAudioDate()) {
+        if (!readOnlyMode && !validateAudioDate()) {
           return;
         }
 

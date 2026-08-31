@@ -42,8 +42,14 @@ def home_redirector(ajax=False):
                                courtrooms=get_available_courtrooms(),
                                recognize_text_enabled=_config_flag('recognize_text_enabled', True),
                                recognize_text_default=_config_flag('recognize_text_default', False),
+                               read_only_mode=_config_flag('read_only_mode'),
                                title='Архивация аудиопротоколов')
     if request.method == 'POST':
+        if _config_flag('read_only_mode'):
+            message = 'Сохранение новых записей отключено администратором.'
+            if ajax:
+                return jsonify({'error': message}), 403
+            return message, 403
         user_folder = request.form.get('user_folder')
         case_number = request.form.get('case_number')
         audio_file = request.files.get('audio_file')
@@ -171,6 +177,7 @@ def home_redirector(ajax=False):
                            courtrooms=get_available_courtrooms(),
                            recognize_text_enabled=_config_flag('recognize_text_enabled', True),
                            recognize_text_default=_config_flag('recognize_text_default', False),
+                           read_only_mode=_config_flag('read_only_mode'),
                            title='Архивация аудиопротоколов')
 
 

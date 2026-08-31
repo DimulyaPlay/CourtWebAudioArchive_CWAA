@@ -5,4 +5,5 @@ closed_audio_path=C:\Users\CourtUser\Desktop\test
 recognize_text_from_audio_path=C:\Users\CourtUser\Desktop\test
 recognize_text_enabled=true
 recognize_text_default=true
+read_only_mode=true
 create_year_subfolders=false
