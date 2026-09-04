@@ -349,6 +349,8 @@ def create_migration_session(hours=SESSION_LIFETIME_HOURS, progress=None):
             "expires_at": expires_at,
             "salt": salt,
             "password_hash": _password_hash(password, salt),
+            "authorization_cache_key": secrets.token_bytes(32),
+            "authorization_cache_tag": None,
             "failed_attempts": 0,
             "entries": entries,
             "entry_by_id": {str(item["id"]): item for item in entries},
@@ -406,6 +408,17 @@ def _authorized_session(session_id):
             return None, (jsonify({"error": "Сессия миграции не найдена или истекла"}), 404)
         if session["failed_attempts"] >= 20:
             return None, (jsonify({"error": "Сессия заблокирована после ошибок пароля"}), 429)
+        authorization = request.headers.get("Authorization", "")
+        authorization_cache_key = session.setdefault("authorization_cache_key", secrets.token_bytes(32))
+        authorization_tag = hmac.new(
+            authorization_cache_key,
+            authorization.encode("utf-8", errors="replace"),
+            hashlib.sha256,
+        ).digest()
+        cached_tag = session.get("authorization_cache_tag")
+        if cached_tag and hmac.compare_digest(authorization_tag, cached_tag):
+            session["failed_attempts"] = 0
+            return session, None
         supplied = _basic_password()
         expected = _password_hash(supplied, session["salt"]) if supplied else b""
         if not supplied or not hmac.compare_digest(expected, session["password_hash"]):
@@ -414,6 +427,10 @@ def _authorized_session(session_id):
             response.headers["WWW-Authenticate"] = 'Basic realm="CWAA migration"'
             return None, (response, 401)
         session["failed_attempts"] = 0
+        # PBKDF2 deliberately remains the first-request verifier. File transfer
+        # then reuses a keyed in-memory tag for the identical Authorization
+        # header instead of repeating 200k PBKDF2 rounds for every audio file.
+        session["authorization_cache_tag"] = authorization_tag
         return session, None
 
 
@@ -431,7 +448,7 @@ def migration_session_info(session_id):
     return _no_store(jsonify({
         "schema": MIGRATION_SCHEMA,
         "source": "CWAA",
-        "source_version": "2.5.1",
+        "source_version": "2.5.3",
         "snapshot_id": session["fingerprint"],
         "created_at": _iso(session["created_at"]),
         "expires_at": _iso(session["expires_at"]),
